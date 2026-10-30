@@ -215,7 +215,7 @@ Significant decisions are recorded as ADRs in `docs/decisions/`.
 |---|---|---|
 | 0001 | Reference repository reconnaissance (license, runnable examples, versions) | Accepted (M0) |
 | 0002 | Log backend selection (candidate: Loki) | Accepted (M0) |
-| TBD | Project license | Open |
+| 0003 | Project license | Accepted (M0) |
 | TBD | Minimum supported Rust toolchain | Open |
 | TBD | CLI orchestration: direct Compose control vs documented layer | Open |
 | TBD | Metrics path: Collector export vs Prometheus scraping | Open (M2) |

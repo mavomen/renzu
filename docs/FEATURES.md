@@ -90,7 +90,7 @@ Dependencies: None.
 
 ### F-002: Development Toolchain and CI
 
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 **Objective:** Establish a reproducible development workflow.
 
