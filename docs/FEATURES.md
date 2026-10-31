@@ -352,7 +352,7 @@ Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
 ### F-014: Rust Developer CLI Foundation
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Create the `renzu` command-line application.
 
@@ -374,7 +374,7 @@ Dependencies: F-002. Scheduled after F-004 so the first real subcommand arrives 
 
 ### F-015: Environment Lifecycle Commands
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Manage the local environment through the CLI.
 
