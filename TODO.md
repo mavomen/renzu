@@ -1,0 +1,1 @@
+F-014: Rust Developer CLI Foundation — implemented on feat/f-014-rust-cli-foundation (renzu skeleton, clap parsing, stubs, tests), not merged to develop; F-015 in progress on feat/f-015-environment-lifecycle (up/status/down driving compose.yaml via docker compose), not merged.
