@@ -3,7 +3,7 @@ use axum::{
     Router,
 };
 use gateway::server::app;
-use gateway::telemetry::Telemetry;
+use gateway::telemetry::{Redacted, Telemetry};
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::TokioIo;
 use opentelemetry_proto::tonic::{
@@ -12,10 +12,13 @@ use opentelemetry_proto::tonic::{
 };
 use prost::Message;
 use std::collections::HashMap;
+use std::io;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower::ServiceExt;
+use tracing_subscriber::fmt::MakeWriter;
+use tracing_subscriber::layer::SubscriberExt as _;
 
 #[derive(Clone, Debug)]
 struct OtlpSpan {
@@ -233,4 +236,95 @@ async fn collect_body(response: axum::response::Response) -> Vec<u8> {
         .await
         .expect("body should read");
     collected.to_bytes().to_vec()
+}
+
+/// A buffering test writer that captures log output into a shared byte buffer.
+struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl<'a> MakeWriter<'a> for CapturedLogs {
+    type Writer = CapturedLogWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        CapturedLogWriter(self.0.clone())
+    }
+}
+
+struct CapturedLogWriter(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for CapturedLogWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Builds a JSON test subscriber that uses the same `ServiceFields` event
+/// formatter as `Telemetry::init`, writing into the provided buffer.
+fn json_subscriber(captured: Arc<Mutex<Vec<u8>>>) -> impl tracing::Subscriber {
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .event_format(gateway::telemetry::ServiceFields)
+        .with_writer(CapturedLogs(captured));
+    tracing_subscriber::registry().with(fmt_layer)
+}
+
+#[test]
+fn redacted_value_emits_redacted() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let captured_clone = captured.clone();
+    let subscriber = json_subscriber(captured);
+
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::info!(auth = %Redacted(&"s3cr3t-token"), "user logged in");
+        tracing::info!(password = ?Redacted(&"hunter2"), "password set");
+    });
+
+    let output = String::from_utf8_lossy(&captured_clone.lock().unwrap()).to_string();
+
+    let lines: Vec<&str> = output.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "expected two log lines, got:\n{output}");
+
+    for line in &lines {
+        let value: serde_json::Value =
+            serde_json::from_str(line).expect("log line should be valid JSON");
+        let fields = value["fields"]
+            .as_object()
+            .expect("fields should be an object");
+        assert!(
+            !fields
+                .values()
+                .any(|v| v.as_str() == Some("s3cr3t-token") || v.as_str() == Some("hunter2")),
+            "secret value must not appear in log: {line}"
+        );
+        assert!(
+            fields.values().any(|v| v.as_str() == Some("[REDACTED]")),
+            "redacted value must render as [REDACTED]: {line}"
+        );
+    }
+}
+
+#[test]
+fn log_events_carries_service_and_environment_fields() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let captured_clone = captured.clone();
+    let subscriber = json_subscriber(captured);
+
+    tracing::subscriber::with_default(subscriber, || {
+        std::env::set_var("RENZU_ENVIRONMENT", "local");
+        tracing::info!("starting gateway service");
+    });
+
+    let output = String::from_utf8_lossy(&captured_clone.lock().unwrap()).to_string();
+    std::env::remove_var("RENZU_ENVIRONMENT");
+
+    let lines: Vec<&str> = output.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 1, "expected one log line, got:\n{output}");
+
+    let value: serde_json::Value =
+        serde_json::from_str(lines[0]).expect("log line should be valid JSON");
+    assert_eq!(value["service.name"], "gateway");
+    assert_eq!(value["service.version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(value["environment"], "local");
 }

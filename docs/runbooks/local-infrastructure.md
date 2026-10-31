@@ -136,6 +136,52 @@ does not add a resource processor; it passes through attributes supplied by the
 application. This avoids speculative abstraction and keeps attribute ownership in
 the application.
 
+## Application logging (F-005)
+
+The gateway emits newline-delimited JSON logs to stdout (M1 behavior; they join
+the Loki pipeline in F-013/M2). No log backend is provisioned here.
+
+Each log event is a JSON object with at least these fields:
+
+| Field | Source | Example |
+|-------|--------|---------|
+| `timestamp` | event time | `2026-11-01T02:00:00Z` |
+| `level` | tracing level | `INFO` |
+| `service.name` | constant | `gateway` |
+| `service.version` | `CARGO_PKG_VERSION` | `0.0.0` |
+| `environment` | `RENZU_ENVIRONMENT` (default `local`) | `local` |
+| `target` | call-site module | `renzu_gateway::main` |
+| `fields` | event fields | `{"message":"..."}` |
+
+Configuration:
+
+- `RENZU_LOG_LEVEL` (default `info`) controls verbosity via `EnvFilter`, the same
+  values as tracing (`off`, `error`, `warn`, `info`, `debug`, `trace`).
+- `RENZU_ENVIRONMENT` (default `local`) distinguishes deployment environments
+  without provisioning a backend.
+
+### Sensitive-data redaction
+
+Redaction is call-site opt-in through the [`Redacted`] wrapper:
+
+```rust
+tracing::info!(auth = %Redacted(&token), "authenticating");
+```
+
+Values wrapped in `Redacted` render as `[REDACTED]`; values logged without it are
+emitted as-is. Documented sensitive keys: `Authorization`, `Cookie`,
+`password`, `token`, `secret`, `api_key`.
+
+### Known limitations
+
+- `trace_id`/`span_id` are not injected into log events at M1: tracing event
+  fields are immutable at creation time, and the OpenTelemetry trace context is
+  not exposed as tracing span fields. Correlation is recorded on spans (F-006)
+  and the log fields can be populated once spans declare them (F-013).
+- Redaction only applies where call sites opt in; unredacted sensitive data
+  logged directly is not caught.
+
+
 ## Error handling and export failure observability
 
 - Collector export failures are logged to the container's stdout/stderr and are
