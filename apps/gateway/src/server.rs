@@ -5,7 +5,7 @@ use axum::{
 };
 use serde_json::json;
 use std::net::SocketAddr;
-use tracing::info;
+use tracing::{info, instrument, Span};
 
 use crate::config::Config;
 use crate::error::AppError;
@@ -39,6 +39,7 @@ pub fn app() -> Router {
 }
 
 /// Liveness probe. Always responds healthy.
+#[instrument(name = "GET /health", skip_all, fields(http.method = "GET", http.route = "/health"))]
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -47,15 +48,22 @@ async fn health() -> Json<HealthResponse> {
 }
 
 /// Readiness probe. Responds healthy when the service is ready to serve traffic.
+#[instrument(name = "GET /ready", skip_all, fields(http.method = "GET", http.route = "/ready"))]
 async fn ready() -> Result<Json<ReadyResponse>, AppError> {
     // No external dependencies in F-004, so the service is always ready.
-    Ok(Json(ReadyResponse {
+    let span = Span::current();
+    let response = Ok(Json(ReadyResponse {
         status: "ready".to_string(),
         service: "gateway".to_string(),
-    }))
+    }));
+    if let Err(ref err) = response {
+        span.record("error", tracing::field::display(err));
+    }
+    response
 }
 
 /// Root endpoint returning service metadata.
+#[instrument(name = "GET /", skip_all, fields(http.method = "GET", http.route = "/"))]
 async fn root() -> Json<serde_json::Value> {
     Json(json!({
         "service": "gateway",
