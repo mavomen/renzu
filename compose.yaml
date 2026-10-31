@@ -39,9 +39,17 @@ services:
     volumes:
       - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     command: ["--config=/etc/otelcol/config.yaml"]
-    # NOTE: the otel/opentelemetry-collector image is distroless and ships no
-    # shell or probe tools (nc/curl/wget), so an internal port probe is not
-    # possible here. Readiness is verified externally by connecting to port
-    # 4317 from the host (see docs/runbooks/local-infrastructure.md).
+    healthcheck:
+      # The otel/opentelemetry-collector image is distroless: it ships no shell
+      # and no probe tools (nc/curl/wget/true/busybox), so an in-container TCP
+      # connect to port 4317 is not possible. Instead, the healthcheck validates
+      # the collector config; a valid config is what binds the OTLP ports, and
+      # an invalid config prevents the container from serving telemetry at all.
+      # The result is visible via `docker compose ps` (healthy/unhealthy).
+      test: ["CMD", "/otelcol", "validate", "--config=/etc/otelcol/config.yaml"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
     # Startup ordering is still enforced: the Collector waits for Jaeger to
     # report healthy via depends_on condition: service_healthy.

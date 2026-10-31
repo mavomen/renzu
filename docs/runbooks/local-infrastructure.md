@@ -5,7 +5,7 @@
 The local observability environment is orchestrated with Docker Compose and
 contains two infrastructure services only (M1 slice):
 
-- **OpenTelemetry Collector** — single OTLP ingest point (traces).
+- **OpenTelemetry Collector** — single OTLP ingest point (traces and metrics).
 - **Jaeger** — trace storage and query UI.
 
 No application services run here yet; the first Rust crate lands in F-004.
@@ -50,10 +50,15 @@ published to the host.
 | Service | Probe | Meaning |
 |---------|-------|---------|
 | Jaeger | `curl http://localhost:16686/` (HTTP 200) | Jaeger query UI is up and serving. |
-| OTel Collector | `nc -z localhost 4317` (TCP connect) | OTLP gRPC port is bound and reachable. |
+| OTel Collector | `otelcol validate --config=/etc/otelcol/config.yaml` (config validation) | Collector config is valid; a valid config is what binds the OTLP ports (4317/4318). |
 
-`docker compose ps` reports `healthy` once all probes pass, `starting` during
-the `start_period`, and `unhealthy` after `retries` consecutive failures.
+The otel/opentelemetry-collector image is distroless: it ships no shell and no probe
+tools (nc/curl/wget), so an in-container TCP connect to port 4317 is not possible.
+The healthcheck therefore validates the collector config instead. `docker compose ps`
+reports `healthy` once validation passes, `starting` during the `start_period`, and
+`unhealthy` after `retries` consecutive failures. An invalid config prevents the
+collector from serving telemetry at all, so config validation is a meaningful proxy
+for port binding.
 
 Startup failures produce actionable diagnostics via `docker compose logs
 <service>`.
@@ -88,12 +93,42 @@ curl -X POST http://127.0.0.1:4318/v1/traces \
 Then open the Jaeger UI at http://127.0.0.1:16686 and query service
 `smoke-test`.
 
+## Batching
+
+Both pipelines use the `batch` processor with default settings (timeout and size).
+Batching reduces the number of export requests and smooths traffic to the backends.
+No custom tuning is applied yet; batching behavior is revisited if throughput or
+memory pressure requires it (see docs/decisions/0005-opentelemetry-collector-pipeline.md).
+
+## Resource attributes
+
+Resource attributes (`service.name`, `service.version`) are set by the gateway
+application (F-006 ADR) and flow through the collector unchanged. The collector
+does not add a resource processor; it passes through attributes supplied by the
+application. This avoids speculative abstraction and keeps attribute ownership in
+the application.
+
+## Error handling and export failure observability
+
+- Collector export failures are logged to the container's stdout/stderr and are
+  never silently dropped. Inspect them with `docker compose logs otel-collector`.
+- Gateway-side export failures are logged by the gateway (F-006 behavior) and are
+  never fatal to the application.
+- If the collector reports `unhealthy` in `docker compose ps`, telemetry export is
+  degraded or unavailable; check `docker compose logs otel-collector` and validate
+  the config with `otelcol validate --config=/etc/otelcol/config.yaml`.
+- The metrics pipeline currently exports to `debug` (stdout) as a local placeholder;
+  it is swapped to Prometheus in F-010. Until then, metrics are observable in the
+  collector logs, not in a metrics backend.
+
 ## Known limitations
 
 - Jaeger stores traces in memory only; data is lost on restart (M1 slice).
 - Runtime validation (`docker compose up`) requires a Docker daemon and the
   ability to pull pinned images. If either is unavailable, `docker compose
   config` still validates the YAML.
-- Health-check probes assume `curl` and `nc` are present in the pinned images;
-  if an image lacks them, its container reports unhealthy and the probe must be
+- Health-check probes assume the collector image ships probe tools; the pinned
+  `otel/opentelemetry-collector:0.113.0` image is distroless and ships none, so the
+  collector healthcheck validates its config instead of running an in-container TCP
+  connect. If the image changes to one with a shell/probe tools, the probe can be
   revisited.

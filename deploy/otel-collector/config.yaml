@@ -1,11 +1,22 @@
-# OpenTelemetry Collector configuration for F-003 (local infrastructure).
-# Minimal M1 pipeline: OTLP receiver -> Jaeger exporter (traces only).
-# The Collector binds OTLP on 0.0.0.0 so the application (on another container
-# or host) can reach it; published ports are mapped to 127.0.0.1 in compose.yaml.
+# OpenTelemetry Collector configuration for F-003 (local infrastructure), extended by F-007.
+# Pipelines:
+#   traces:   otlp -> batch -> otlphttp -> jaeger:4318
+#   metrics:  otlp -> batch -> debug (placeholder; swapped to Prometheus in F-010)
+# The Collector binds OTLP on 0.0.0.0 so the application can reach it; published
+# ports are mapped to 127.0.0.1 in compose.yaml.
 #
 # Note: the `jaeger` exporter was removed from the OTel Collector in recent
 # versions; the `otlphttp` exporter is used instead, targeting Jaeger's OTLP
 # HTTP receiver (jaeger:4318). Jaeger all-in-one accepts OTLP on 4317/4318.
+#
+# The `health_check` extension exposes a /healthz HTTP endpoint on 13133. The
+# image is distroless (no shell/nc/curl/wget), so compose.yaml probes the
+# collector by validating its config rather than running an in-container TCP
+# connect; a valid config is what binds the OTLP ports.
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
 
 receivers:
   otlp:
@@ -18,9 +29,22 @@ receivers:
 exporters:
   otlphttp:
     endpoint: http://jaeger:4318
+  # `logging` is deprecated (hard decode error) in collector 0.113.0; `debug`
+  # is its replacement and is used here as the local metrics placeholder. F-010
+  # swaps this for Prometheus once that backend exists.
+  debug:
+
+processors:
+  batch:
 
 service:
+  extensions: [health_check]
   pipelines:
     traces:
       receivers: [otlp]
+      processors: [batch]
       exporters: [otlphttp]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
