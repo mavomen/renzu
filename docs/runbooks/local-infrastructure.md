@@ -93,6 +93,34 @@ curl -X POST http://127.0.0.1:4318/v1/traces \
 Then open the Jaeger UI at http://127.0.0.1:16686 and query service
 `smoke-test`.
 
+## Trace Visualization (Jaeger UI)
+
+Once the gateway has been exercised against the Collector (for example via
+`scripts/e2e-trace-visualization.sh`), traces are queryable in Jaeger:
+
+1. Open http://127.0.0.1:16686 in a browser.
+2. From the "Service" dropdown, select `gateway`.
+3. Click "Find Traces".
+4. Inspect each trace:
+   - Span `operationName` shows the instrumented route (for example `GET /health`).
+   - Span `duration` shows the operation timing (microseconds; should be > 0).
+   - Span tags show `http.method` and `http.route`.
+   - Process tags show `service.name=gateway` (the resource attribute set by the
+     gateway and passed through the Collector unchanged).
+
+Automated verification:
+
+```bash
+# Requires docker compose up -d (jaeger + otel-collector) to be running.
+./scripts/e2e-trace-visualization.sh
+```
+
+The script builds and runs the gateway, hits `GET /health`, `/ready` and `/`,
+polls the Jaeger API (`http://127.0.0.1:16686/api/traces?service=gateway`),
+and asserts that traces appear with `service.name=gateway` as a resource
+attribute and span durations greater than zero. It exits 0 on success and
+always stops the gateway process it started; compose is left running.
+
 ## Batching
 
 Both pipelines use the `batch` processor with default settings (timeout and size).
