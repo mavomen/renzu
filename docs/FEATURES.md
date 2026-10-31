@@ -114,7 +114,7 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Provide a repeatable local environment.
 
@@ -202,7 +202,7 @@ Dependencies: F-003, F-004.
 
 ### F-007: OpenTelemetry Collector Pipeline
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Centralize telemetry collection and export.
 
