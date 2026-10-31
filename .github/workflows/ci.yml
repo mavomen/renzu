@@ -31,3 +31,26 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Start local infrastructure (docker compose)
+        run: docker compose up -d
+
+      - name: Wait for services to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose ps | grep -q "healthy" && ! docker compose ps | grep -Eq "unhealthy|starting"; then
+              echo "services healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "services did not become healthy:" >&2
+          docker compose ps >&2
+          exit 1
+
+      - name: Run trace visualization E2E
+        run: ./scripts/e2e-trace-visualization.sh
+
+      - name: Stop local infrastructure
+        run: docker compose down
+        if: always()
