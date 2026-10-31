@@ -180,7 +180,7 @@ Dependencies: F-001 (log field conventions), F-004.
 
 ### F-006: Distributed Trace Instrumentation
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Trace operations within an application service.
 

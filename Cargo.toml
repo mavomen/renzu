@@ -17,3 +17,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tower-http = { version = "0.5", features = ["trace"] }
+opentelemetry = "0.33.1"
+opentelemetry_sdk = "0.33.1"
+opentelemetry-otlp = "0.33.1"
+tracing-opentelemetry = "0.34.0"
