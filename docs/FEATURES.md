@@ -137,7 +137,7 @@ Dependencies: F-002.
 
 ### F-004: Rust HTTP Service
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Establish the first independently runnable application service.
 
