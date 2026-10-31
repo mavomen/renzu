@@ -114,7 +114,7 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Provide a repeatable local environment.
 
