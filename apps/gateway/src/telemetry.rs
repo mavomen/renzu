@@ -63,6 +63,11 @@ static ENVIRONMENT: OnceLock<String> = OnceLock::new();
 /// before the process exits.
 pub struct Telemetry {
     provider: SdkTracerProvider,
+    /// Guard for the thread-level tracing dispatcher default, used when the
+    /// process-wide global default is already installed (e.g. in tests where
+    /// multiple tests each call Telemetry::init).
+    #[allow(dead_code)]
+    _dispatch_guard: Option<tracing::dispatcher::DefaultGuard>,
 }
 
 /// A value wrapper that redacts sensitive information from log output.
@@ -215,17 +220,40 @@ impl Telemetry {
         let fmt_layer = tracing_subscriber::fmt::layer()
             .json()
             .event_format(ServiceFields)
-            .with_filter(env_filter);
+            .with_filter(env_filter.clone());
 
-        tracing_subscriber::registry()
+        let subscriber = tracing_subscriber::registry()
             .with(fmt_layer)
-            .with(otel_layer)
-            .try_init()
-            .map_err(|e| format!("failed to install tracing subscriber: {e}"))?;
+            .with(otel_layer);
+
+        let _dispatch_guard = match subscriber.try_init() {
+            Ok(()) => None,
+            Err(_) => {
+                // Global default already installed (e.g. from another test).
+                // Fall back to a thread-local default so spans created on this
+                // thread still use this subscriber. Rebuild the layers since
+                // they were moved into the first subscriber.
+                let otel_layer =
+                    tracing_opentelemetry::OpenTelemetryLayer::new(provider.tracer(SERVICE_NAME));
+                let fmt_layer = tracing_subscriber::fmt::layer()
+                    .json()
+                    .event_format(ServiceFields)
+                    .with_filter(env_filter.clone());
+                let subscriber = tracing_subscriber::registry()
+                    .with(fmt_layer)
+                    .with(otel_layer);
+                Some(tracing::dispatcher::set_default(&tracing::Dispatch::from(
+                    subscriber,
+                )))
+            }
+        };
 
         tracing::info!(endpoint = %endpoint, "telemetry initialized");
 
-        Ok(Self { provider })
+        Ok(Self {
+            provider,
+            _dispatch_guard,
+        })
     }
 
     /// Force a flush of all queued spans to the OTLP endpoint.

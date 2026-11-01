@@ -224,7 +224,7 @@ Dependencies: F-003, F-006.
 
 ### F-008: Distributed Trace Visualization
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Inspect trace spans and operation timing.
 

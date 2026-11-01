@@ -212,6 +212,7 @@ async fn order_forward(
 
     // Inject controlled error if enabled.
     if fault_state.is_controlled_error_enabled() {
+        span.record("error", "controlled error: simulated gateway error");
         return Err(AppError::Internal(
             "controlled error: simulated gateway error".to_string(),
         ));

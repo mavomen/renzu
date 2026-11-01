@@ -158,6 +158,141 @@ async fn health_span_exported_to_otlp_receiver() {
     telemetry.shutdown();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn error_span_exported_to_otlp_receiver() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("test receiver should bind");
+    let addr: SocketAddr = listener.local_addr().expect("local addr");
+    let endpoint = format!("http://{addr}/v1/traces");
+
+    let spans: Arc<Mutex<Vec<OtlpSpan>>> = Arc::new(Mutex::new(Vec::new()));
+    let spans_svc = spans.clone();
+
+    let service = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+        let spans = spans_svc.clone();
+        async move {
+            if req.method() == hyper::http::Method::POST && req.uri().path() == "/v1/traces" {
+                let bytes = collect_incoming(req.into_body()).await;
+                if let Ok(request) = ExportTraceServiceRequest::decode(&bytes[..]) {
+                    for resource_spans in request.resource_spans {
+                        for scope_spans in resource_spans.scope_spans {
+                            for span in scope_spans.spans {
+                                let mut attributes = HashMap::new();
+                                for attr in span.attributes {
+                                    let key = attr.key;
+                                    attributes.insert(
+                                        key,
+                                        attr.value
+                                            .map(|v| any_value_to_string(&v))
+                                            .unwrap_or_default(),
+                                    );
+                                }
+                                spans
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .push(OtlpSpan {
+                                        name: span.name,
+                                        attributes,
+                                    });
+                            }
+                        }
+                    }
+                }
+                Ok::<_, hyper::Error>(hyper::Response::new(Empty::<hyper::body::Bytes>::new()))
+            } else {
+                Ok::<_, hyper::Error>(
+                    hyper::Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(Empty::<hyper::body::Bytes>::new())
+                        .unwrap(),
+                )
+            }
+        }
+    });
+
+    let receiver = tokio::spawn(async move {
+        loop {
+            let (stream, _) = match listener.accept().await {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            let svc = service.clone();
+            if hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), svc)
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
+
+    // Allow the receiver to start accepting connections.
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
+    let telemetry = Telemetry::init("info").expect("telemetry should initialize");
+
+    let router = test_app();
+
+    // Enable controlled error fault so /order/123 returns 500.
+    let fault_request = Request::builder()
+        .uri("/faults/controlled-error")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"message":"simulated gateway error"}"#,
+        ))
+        .unwrap();
+    let fault_response = router
+        .clone()
+        .oneshot(fault_request)
+        .await
+        .expect("service should respond");
+    assert_eq!(fault_response.status(), StatusCode::OK);
+
+    // Hit /order/123: controlled error fault makes it return 500.
+    let request = Request::builder()
+        .uri("/order/123")
+        .method("GET")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    // The span is held by the response body. Drop the response so the span
+    // closes and is handed to the batch processor, then flush.
+    drop(response);
+    telemetry.force_flush();
+
+    let received: Vec<_> = spans
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect();
+    let span = received
+        .iter()
+        .find(|s| {
+            s.name == "http.request" && s.attributes.get("route") == Some(&"/order/123".to_string())
+        })
+        .cloned()
+        .expect("expected /order/123 error span to be exported to OTLP receiver");
+    assert_eq!(
+        span.attributes.get("route"),
+        Some(&"/order/123".to_string())
+    );
+    assert_eq!(span.attributes.get("method"), Some(&"GET".to_string()));
+
+    drop(receiver);
+    std::env::remove_var("RENZU_OTLP_ENDPOINT");
+    telemetry.shutdown();
+}
+
 #[tokio::test]
 async fn health_endpoint_returns_healthy() {
     let router = test_app();
