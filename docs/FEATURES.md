@@ -245,7 +245,7 @@ Dependencies: F-007.
 
 ### F-009: Metrics Instrumentation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Expose application health and performance metrics.
 
