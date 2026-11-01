@@ -396,7 +396,7 @@ Dependencies: F-003, F-014.
 
 ### F-016: Baseline and Fault-Injection Scenarios
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Provide reproducible system behaviors for investigation.
 
@@ -422,7 +422,7 @@ Dependencies: F-008, F-010, F-011, F-012, F-014.
 
 ### F-017: Load Generation and Measurement
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Generate controlled traffic and measure system behavior.
 
@@ -446,7 +446,7 @@ Dependencies: F-012, F-014.
 
 ### F-018: Experiment Reports and End-to-End Verification
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Turn scenario executions into reproducible investigations.
 
