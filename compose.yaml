@@ -118,5 +118,28 @@ services:
       retries: 3
       start_period: 15s
 
+
+  orders:
+    build:
+      context: .
+      dockerfile: apps/orders/Dockerfile
+    container_name: renzu-orders
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      - RENZU_HOST=0.0.0.0
+      - RENZU_PORT=8081
+      - RENZU_LOG_LEVEL=info
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
 volumes:
   postgres_data:

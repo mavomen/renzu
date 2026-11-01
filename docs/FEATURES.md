@@ -288,7 +288,7 @@ Dependencies: F-009.
 
 ### F-011: PostgreSQL Integration
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Introduce a database dependency into the demonstration system.
 
@@ -309,7 +309,7 @@ Dependencies: F-003, F-004, F-006.
 
 ### F-012: Second Rust Service
 
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 **Objective:** Establish a genuinely distributed request path.
 
