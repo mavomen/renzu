@@ -72,10 +72,13 @@ async fn health_span_exported_to_otlp_receiver() {
                                             .unwrap_or_default(),
                                     );
                                 }
-                                spans.lock().unwrap().push(OtlpSpan {
-                                    name: span.name,
-                                    attributes,
-                                });
+                                spans
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .push(OtlpSpan {
+                                        name: span.name,
+                                        attributes,
+                                    });
                             }
                         }
                     }
@@ -128,24 +131,29 @@ async fn health_span_exported_to_otlp_receiver() {
         .expect("service should respond");
     assert_eq!(response.status(), StatusCode::OK);
 
-    // The batch processor exports on a background thread; flush so the span is
-    // guaranteed to have reached the receiver before we assert.
+    // The span is held by the response body (ResponseBody in tower_http). Drop
+    // the response so the span closes and is handed to the batch processor,
+    // then flush so the span is guaranteed to have reached the receiver.
+    drop(response);
     telemetry.force_flush();
 
-    let span = spans
+    let received: Vec<_> = spans
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .iter()
-        .find(|s| s.name == "GET /health")
+        .cloned()
+        .collect();
+    let span = received
+        .iter()
+        .find(|s| {
+            s.name == "http.request" && s.attributes.get("route") == Some(&"/health".to_string())
+        })
         .cloned()
         .expect("expected GET /health span to be exported to OTLP receiver");
-    assert_eq!(
-        span.attributes.get("http.route"),
-        Some(&"/health".to_string())
-    );
-    assert_eq!(span.attributes.get("http.method"), Some(&"GET".to_string()));
+    assert_eq!(span.attributes.get("route"), Some(&"/health".to_string()));
+    assert_eq!(span.attributes.get("method"), Some(&"GET".to_string()));
 
-    receiver.abort();
+    drop(receiver);
     std::env::remove_var("RENZU_OTLP_ENDPOINT");
     telemetry.shutdown();
 }

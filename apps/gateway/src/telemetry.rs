@@ -29,6 +29,8 @@
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use std::fmt::{self};
@@ -194,7 +196,7 @@ impl Telemetry {
             .map_err(|e| format!("failed to build OTLP exporter: {e}"))?;
 
         let provider = SdkTracerProvider::builder()
-            .with_batch_exporter(exporter)
+            .with_span_processor(BatchSpanProcessor::builder(exporter, Tokio).build())
             .with_resource(
                 Resource::builder()
                     .with_attributes(vec![
