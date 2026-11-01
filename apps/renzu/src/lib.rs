@@ -3,10 +3,11 @@
 //! Provides `clap`-based argument parsing, top-level help, command and
 //! error-handling conventions, and stable exit codes. `up`, `status`, and
 //! `down` drive the local observability environment (`compose.yaml`) through
-//! `docker compose`; `scenario`, `load-test`, and `report` remain stubs for
-//! F-016 through F-018.
+//! `docker compose`; `scenario` and `load-test` drive fault-injection
+//! experiments; `report` reads a saved experiment report from disk.
 
 mod loadgen;
+mod report;
 mod scenarios;
 
 use std::path::{Path, PathBuf};
@@ -30,8 +31,8 @@ struct Cli {
 /// Available `renzu` subcommands.
 ///
 /// Every planned subcommand is listed as a variant so `--help` surfaces
-/// the full command surface immediately. `scenario`, `load-test`, and
-/// `report` remain stubs until F-016-F-018 implement real handlers.
+/// the full command surface immediately. `scenario` was implemented by
+/// F-016, `load-test` by F-017, and `report` by F-018.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Bring up the local observability environment.
@@ -221,7 +222,7 @@ fn dispatch(command: Command) -> ExitCode {
             concurrency,
             url,
         } => run_or_report(|| load_test(scenario, duration, rate, concurrency, url)),
-        Command::Report { run_id } => run_stub(&format!("report {run_id}")),
+        Command::Report { run_id } => run_or_report(move || report_command(run_id)),
     }
 }
 
@@ -461,9 +462,10 @@ fn scenario_run(name: &str) -> Result<ExitCode, CliError> {
 
 /// Run a load test against a scenario.
 ///
-/// Enables the scenario's fault on the gateway, generates load for the
-/// configured duration, then always disables the fault. Results are printed
-/// to stdout.
+/// Generates a unique run ID, enables the scenario's fault on the gateway,
+/// generates load for the configured duration, then always disables the fault.
+/// A JSON report is written to `./reports/<run-id>.json` (or
+/// `$RENZU_REPORTS_DIR`) and the run ID plus results are printed to stdout.
 fn load_test(
     scenario: String,
     duration_secs: u64,
@@ -487,25 +489,48 @@ fn load_test(
     };
 
     let config = loadgen::LoadTestConfig {
-        scenario,
+        scenario: scenario.clone(),
         duration: Duration::from_secs(duration_secs),
         workload,
         url,
     };
 
-    match loadgen::run_load_test(&config) {
-        Ok(result) => {
-            println!("{}", result.render());
-            Ok(ExitCode::from(0))
-        }
-        Err(err) => Err(err.to_cli_error()),
-    }
+    let mut result = match loadgen::run_load_test(&config) {
+        Ok(result) => result,
+        Err(err) => return Err(err.to_cli_error()),
+    };
+
+    let run_id = report::generate_run_id(&scenario);
+    result.run_id = run_id.clone();
+
+    let start_time = report::now_rfc3339();
+    let experiment_report =
+        report::build_report(&run_id, &result, result.completion_status, start_time);
+    report::write_report(&experiment_report)
+        .map_err(|e| CliError::Orchestration(format!("failed to write report: {e}")))?;
+
+    println!("run id: {run_id}");
+    println!("{}", result.render());
+    Ok(ExitCode::from(0))
 }
 
-/// Run a stub subcommand.
+/// Read a saved experiment report and print it to stdout.
 ///
-/// Prints `renzu <command>: not yet implemented` to stderr and exits 0.
-fn run_stub(command: &str) -> ExitCode {
-    eprintln!("renzu {command}: not yet implemented");
-    ExitCode::from(0)
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1); the
+/// failure is never silently reported as success.
+fn report_command(run_id: String) -> Result<ExitCode, CliError> {
+    match report::read_report(&run_id) {
+        Ok(report) => {
+            let json = serde_json::to_string_pretty(&report)
+                .map_err(|e| CliError::Internal(format!("serialize report: {e}")))?;
+            println!("{json}");
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to read report {run_id}: {err}"
+        ))),
+    }
 }

@@ -1,4 +1,5 @@
 use renzu::run;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -28,7 +29,6 @@ fn stub_subcommands_exit_zero() {
         vec!["renzu", "scenario", "list"],
         vec!["renzu", "scenario", "run", "name"],
         vec!["renzu", "load-test", "--scenario", "name"],
-        vec!["renzu", "report", "run-id"],
     ] {
         assert_eq!(run(args), ExitCode::from(0));
     }
@@ -46,6 +46,45 @@ fn stub_subcommand_prints_not_implemented_to_stderr() {
     assert_eq!(output.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("renzu scenario list: not yet implemented"));
+}
+
+#[test]
+fn report_unknown_run_id_exits_one() {
+    let output = renzu()
+        .arg("report")
+        .arg("does-not-exist")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown run id: does-not-exist"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn report_reads_saved_report() {
+    let run_id = "report-test-run";
+    let reports_dir = workspace_root().join("reports");
+    fs::create_dir_all(&reports_dir).expect("create reports dir");
+    let report_path = reports_dir.join(format!("{run_id}.json"));
+    let json = r#"{"run_id":"report-test-run","scenario":"baseline","start_time":"2026-01-01T00:00:00Z","duration_secs":10,"completion_status":"complete","workload":{"scenario":"baseline","duration_secs":10,"kind":"rate","value":20,"url":"http://127.0.0.1:8080/health"},"counts":{"total":100,"successful":95,"failed":5},"latency":{"count":100,"min_ms":1.0,"max_ms":50.0,"mean_ms":10.0,"p50_ms":9.0,"p95_ms":20.0,"p99_ms":40.0},"throughput_rps":10.0,"telemetry_references":[],"warnings":["missing telemetry: trace IDs are not collected in F-018"]}"#;
+    fs::write(&report_path, json).expect("write report fixture");
+    let output = renzu()
+        .arg("report")
+        .arg(run_id)
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(run_id), "stdout missing run id: {stdout}");
+    assert!(
+        stdout.contains("baseline"),
+        "stdout missing scenario: {stdout}"
+    );
+    let _ = fs::remove_file(&report_path);
+    let _ = fs::remove_dir(&reports_dir);
 }
 
 fn docker_compose_available() -> bool {
