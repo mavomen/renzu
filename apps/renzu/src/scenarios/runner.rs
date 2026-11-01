@@ -112,7 +112,7 @@ fn run_scenario_body(client: &Client, scenario: &Scenario) -> Result<(), String>
 }
 
 /// Enable a fault on the gateway via its fault-control endpoint.
-fn enable_fault(client: &Client, scenario: &Scenario) -> Result<(), String> {
+pub(crate) fn enable_fault(client: &Client, scenario: &Scenario) -> Result<(), String> {
     match &scenario.fault {
         FaultType::None => Ok(()),
         FaultType::DatabaseLatency(_) => {
@@ -148,7 +148,7 @@ fn enable_fault(client: &Client, scenario: &Scenario) -> Result<(), String> {
 }
 
 /// Disable (clean up) a fault on the gateway.
-fn disable_fault(client: &Client, scenario: &Scenario) -> Result<(), String> {
+pub(crate) fn disable_fault(client: &Client, scenario: &Scenario) -> Result<(), String> {
     match &scenario.fault {
         FaultType::None => Ok(()),
         FaultType::DatabaseLatency(_) => {

@@ -6,6 +6,7 @@
 //! `docker compose`; `scenario`, `load-test`, and `report` remain stubs for
 //! F-016 through F-018.
 
+mod loadgen;
 mod scenarios;
 
 use std::path::{Path, PathBuf};
@@ -68,6 +69,18 @@ enum Command {
         /// Name of the scenario to load test.
         #[arg(long)]
         scenario: String,
+        /// Test duration in seconds (1-3600).
+        #[arg(long, default_value = "10")]
+        duration: u64,
+        /// Requests per second (mutually exclusive with --concurrency).
+        #[arg(long, conflicts_with = "concurrency")]
+        rate: Option<u64>,
+        /// Number of concurrent clients (mutually exclusive with --rate).
+        #[arg(long, conflicts_with = "rate")]
+        concurrency: Option<u64>,
+        /// Target URL for each request.
+        #[arg(long, default_value = "http://127.0.0.1:8080/health")]
+        url: String,
     },
     /// Show a report for a run.
     Report {
@@ -201,7 +214,13 @@ fn dispatch(command: Command) -> ExitCode {
             Scenario::List => run_or_report(scenario_list),
             Scenario::Run { name } => run_or_report(|| scenario_run(&name)),
         },
-        Command::LoadTest { scenario } => run_stub(&format!("load-test --scenario {scenario}")),
+        Command::LoadTest {
+            scenario,
+            duration,
+            rate,
+            concurrency,
+            url,
+        } => run_or_report(|| load_test(scenario, duration, rate, concurrency, url)),
         Command::Report { run_id } => run_stub(&format!("report {run_id}")),
     }
 }
@@ -437,6 +456,49 @@ fn scenario_run(name: &str) -> Result<ExitCode, CliError> {
             }
         }
         Err(err) => Err(CliError::Internal(err)),
+    }
+}
+
+/// Run a load test against a scenario.
+///
+/// Enables the scenario's fault on the gateway, generates load for the
+/// configured duration, then always disables the fault. Results are printed
+/// to stdout.
+fn load_test(
+    scenario: String,
+    duration_secs: u64,
+    rate: Option<u64>,
+    concurrency: Option<u64>,
+    url: String,
+) -> Result<ExitCode, CliError> {
+    let workload = match (rate, concurrency) {
+        (Some(rps), None) => loadgen::Workload::Rate { rps },
+        (None, Some(n)) => loadgen::Workload::Concurrency { n },
+        (Some(_), Some(_)) => {
+            return Err(CliError::Usage(
+                "--rate and --concurrency are mutually exclusive".to_string(),
+            ))
+        }
+        (None, None) => {
+            return Err(CliError::Usage(
+                "either --rate or --concurrency is required".to_string(),
+            ))
+        }
+    };
+
+    let config = loadgen::LoadTestConfig {
+        scenario,
+        duration: Duration::from_secs(duration_secs),
+        workload,
+        url,
+    };
+
+    match loadgen::run_load_test(&config) {
+        Ok(result) => {
+            println!("{}", result.render());
+            Ok(ExitCode::from(0))
+        }
+        Err(err) => Err(err.to_cli_error()),
     }
 }
 
