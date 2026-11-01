@@ -478,7 +478,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -496,7 +496,7 @@ Dependencies: F-018.
 ### F-020: Performance Comparison Reports
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Compare any two experiment runs (generalizing the baseline-vs-faulted view from F-018).
@@ -550,7 +550,7 @@ Dependencies: F-021.
 ### F-023: Expanded Failure Scenarios
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Extend cascading-failure demonstrations beyond the initial scenario in F-016.
