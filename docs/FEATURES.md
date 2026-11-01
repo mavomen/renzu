@@ -288,7 +288,7 @@ Dependencies: F-009.
 
 ### F-011: PostgreSQL Integration
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Introduce a database dependency into the demonstration system.
 

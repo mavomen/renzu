@@ -1,3 +1,4 @@
+use axum::extract::Extension;
 use axum::{
     response::{Json, Result},
     routing::get,
@@ -5,9 +6,11 @@ use axum::{
 };
 use serde_json::json;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tracing::{info, instrument, Span};
 
 use crate::config::Config;
+use crate::db;
 use crate::error::AppError;
 use crate::metrics::MetricsLayer;
 
@@ -31,11 +34,14 @@ struct ReadyResponse {
 /// - `GET /health` — liveness probe, always returns healthy.
 /// - `GET /ready` — readiness probe, returns healthy when dependencies are up.
 /// - `GET /` — root endpoint returning service metadata.
-pub fn app() -> Router {
+/// - `GET /db/health` — database connectivity probe.
+pub fn app(pool: Arc<db::DbPool>) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/", get(root))
+        .route("/db/health", get(db_health))
+        .layer(Extension(pool))
         .layer(tower_http::trace::TraceLayer::new_for_http())
 }
 
@@ -48,13 +54,19 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-/// Readiness probe. Responds healthy when the service is ready to serve traffic.
+/// Readiness probe. Responds healthy when the service and its dependencies
+/// (PostgreSQL) are ready to serve traffic.
 #[instrument(name = "GET /ready", skip_all, fields(http.method = "GET", http.route = "/ready"))]
-async fn ready() -> Result<Json<ReadyResponse>, AppError> {
-    // No external dependencies in F-004, so the service is always ready.
+async fn ready(
+    Extension(pool): Extension<Arc<db::DbPool>>,
+) -> Result<Json<ReadyResponse>, AppError> {
     let span = Span::current();
+    let status = match db::health_check(&pool).await {
+        Ok(()) => "ready",
+        Err(_) => "not ready",
+    };
     let response = Ok(Json(ReadyResponse {
-        status: "ready".to_string(),
+        status: status.to_string(),
         service: "gateway".to_string(),
     }));
     if let Err(ref err) = response {
@@ -73,6 +85,24 @@ async fn root() -> Json<serde_json::Value> {
     }))
 }
 
+/// Database health check. Runs `SELECT 1` against PostgreSQL and reports
+/// whether the database is reachable.
+#[instrument(name = "GET /db/health", skip_all, fields(http.method = "GET", http.route = "/db/health"))]
+async fn db_health(
+    Extension(pool): Extension<Arc<db::DbPool>>,
+) -> Result<axum::Json<serde_json::Value>, AppError> {
+    match db::health_check(&pool).await {
+        Ok(()) => Ok(axum::Json(serde_json::json!({
+            "status": "healthy",
+            "service": "gateway",
+            "database": "connected",
+        }))),
+        Err(e) => Err(AppError::Internal(format!(
+            "database health check failed: {e}"
+        ))),
+    }
+}
+
 /// Start the HTTP server bound to the address derived from `config`.
 ///
 /// The router is wrapped with [`MetricsLayer`] so every request (including
@@ -89,10 +119,17 @@ pub async fn run(config: Config) -> Result<(), AppError> {
     let metrics = crate::metrics::Metrics::init()
         .map_err(|e| AppError::Internal(format!("metrics init error: {e}")))?;
     let metrics_handle = metrics.clone();
-    let app = app().layer(MetricsLayer::new(metrics));
+    let pool = Arc::new(
+        db::init_db(&config.database_url)
+            .await
+            .map_err(|e| AppError::Internal(format!("database init error: {e}")))?,
+    );
+    let app = app(pool.clone()).layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
+
     let result = axum::serve(listener, app).await;
     let _ = metrics_handle.shutdown();
+    pool.close().await;
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
     Ok(())
 }
