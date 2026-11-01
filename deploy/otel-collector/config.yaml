@@ -33,13 +33,6 @@ exporters:
   # is its replacement and is used here as the local metrics placeholder. F-010
   # swaps this for Prometheus once that backend exists.
   debug:
-  prometheus:
-    endpoint: 0.0.0.0:9464
-  loki:
-    endpoint: http://loki:3100/loki/api/v1/push
-    num_workers: 4
-    queue_size: 10000
-    endpoint: 0.0.0.0:9464
 
 processors:
   batch:
@@ -54,8 +47,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [prometheus]
-    logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [loki]
+      exporters: [debug]
