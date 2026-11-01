@@ -15,6 +15,8 @@ pub struct Config {
     pub log_level: String,
     /// PostgreSQL connection URL.
     pub database_url: String,
+    /// Orders service URL (e.g. http://orders:8081).
+    pub orders_url: String,
 }
 
 impl Config {
@@ -25,6 +27,7 @@ impl Config {
     /// - `RENZU_PORT` (default `8080`)
     /// - `RENZU_LOG_LEVEL` (default `info`)
     /// - `RENZU_DATABASE_URL` (default `postgres://renzu:renzu@127.0.0.1:5432/renzu`, local-only)
+    /// - `RENZU_ORDERS_URL` (default `http://orders:8081`, local-only)
     pub fn from_env() -> Result<Config, ConfigError> {
         let host = std::env::var("RENZU_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let port: u16 = std::env::var("RENZU_PORT")
@@ -34,6 +37,8 @@ impl Config {
         let log_level = std::env::var("RENZU_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
         let database_url = std::env::var("RENZU_DATABASE_URL")
             .unwrap_or_else(|_| "postgres://renzu:renzu@127.0.0.1:5432/renzu".to_string());
+        let orders_url = std::env::var("RENZU_ORDERS_URL")
+            .unwrap_or_else(|_| "http://orders:8081".to_string());
 
         let addr: SocketAddr = format!("{host}:{port}")
             .parse()
@@ -46,6 +51,7 @@ impl Config {
             port,
             log_level,
             database_url,
+            orders_url,
         })
     }
 
@@ -64,11 +70,15 @@ mod tests {
         std::env::remove_var("RENZU_HOST");
         std::env::remove_var("RENZU_PORT");
         std::env::remove_var("RENZU_LOG_LEVEL");
+        std::env::remove_var("RENZU_DATABASE_URL");
+        std::env::remove_var("RENZU_ORDERS_URL");
 
         let config = Config::from_env().expect("defaults should load");
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
         assert_eq!(config.log_level, "info");
+        assert_eq!(config.database_url, "postgres://renzu:renzu@127.0.0.1:5432/renzu");
+        assert_eq!(config.orders_url, "http://orders:8081");
         assert_eq!(config.bind_addr(), "127.0.0.1:8080");
     }
 
@@ -77,15 +87,21 @@ mod tests {
         std::env::set_var("RENZU_HOST", "0.0.0.0");
         std::env::set_var("RENZU_PORT", "9090");
         std::env::set_var("RENZU_LOG_LEVEL", "debug");
+        std::env::set_var("RENZU_DATABASE_URL", "postgres://user:pass@localhost:5432/db");
+        std::env::set_var("RENZU_ORDERS_URL", "http://orders:9091");
 
         let config = Config::from_env().expect("overrides should load");
         assert_eq!(config.host, "0.0.0.0");
         assert_eq!(config.port, 9090);
         assert_eq!(config.log_level, "debug");
+        assert_eq!(config.database_url, "postgres://user:pass@localhost:5432/db");
+        assert_eq!(config.orders_url, "http://orders:9091");
 
         std::env::remove_var("RENZU_HOST");
         std::env::remove_var("RENZU_PORT");
         std::env::remove_var("RENZU_LOG_LEVEL");
+        std::env::remove_var("RENZU_DATABASE_URL");
+        std::env::remove_var("RENZU_ORDERS_URL");
     }
 
     #[test]

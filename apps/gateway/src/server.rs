@@ -1,52 +1,45 @@
-use axum::extract::Extension;
 use axum::{
+    extract::Extension,
+    http::header::{HeaderMap, CONTENT_TYPE},
     response::{Json, Result},
     routing::get,
     Router,
 };
+use serde::Serialize;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{info, instrument, Span};
+use tracing::{info};
 
 use crate::config::Config;
 use crate::db;
 use crate::error::AppError;
 use crate::metrics::MetricsLayer;
 
-/// Health check response.
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct HealthResponse {
     status: String,
     service: String,
 }
 
-/// Readiness check response.
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct ReadyResponse {
     status: String,
     service: String,
 }
 
-/// Build the Axum application router.
-///
-/// Routes:
-/// - `GET /health` — liveness probe, always returns healthy.
-/// - `GET /ready` — readiness probe, returns healthy when dependencies are up.
-/// - `GET /` — root endpoint returning service metadata.
-/// - `GET /db/health` — database connectivity probe.
-pub fn app(pool: Arc<db::DbPool>) -> Router {
+pub fn app(pool: Arc<db::DbPool>, orders_client: reqwest::Client) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/", get(root))
         .route("/db/health", get(db_health))
+        .route("/order/:id", get(order_forward))
         .layer(Extension(pool))
+        .layer(Extension(orders_client))
         .layer(tower_http::trace::TraceLayer::new_for_http())
 }
 
-/// Liveness probe. Always responds healthy.
-#[instrument(name = "GET /health", skip_all, fields(http.method = "GET", http.route = "/health"))]
 async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -54,13 +47,10 @@ async fn health() -> Json<HealthResponse> {
     })
 }
 
-/// Readiness probe. Responds healthy when the service and its dependencies
-/// (PostgreSQL) are ready to serve traffic.
-#[instrument(name = "GET /ready", skip_all, fields(http.method = "GET", http.route = "/ready"))]
 async fn ready(
     Extension(pool): Extension<Arc<db::DbPool>>,
 ) -> Result<Json<ReadyResponse>, AppError> {
-    let span = Span::current();
+    let span = tracing::Span::current();
     let status = match db::health_check(&pool).await {
         Ok(()) => "ready",
         Err(_) => "not ready",
@@ -75,19 +65,14 @@ async fn ready(
     response
 }
 
-/// Root endpoint returning service metadata.
-#[instrument(name = "GET /", skip_all, fields(http.method = "GET", http.route = "/"))]
 async fn root() -> Json<serde_json::Value> {
     Json(json!({
         "service": "gateway",
         "version": env!("CARGO_PKG_VERSION"),
-        "endpoints": ["/", "/health", "/ready"],
+        "endpoints": ["/", "/health", "/ready", "/db/health", "/order/:id"],
     }))
 }
 
-/// Database health check. Runs `SELECT 1` against PostgreSQL and reports
-/// whether the database is reachable.
-#[instrument(name = "GET /db/health", skip_all, fields(http.method = "GET", http.route = "/db/health"))]
 async fn db_health(
     Extension(pool): Extension<Arc<db::DbPool>>,
 ) -> Result<axum::Json<serde_json::Value>, AppError> {
@@ -103,11 +88,46 @@ async fn db_health(
     }
 }
 
-/// Start the HTTP server bound to the address derived from `config`.
-///
-/// The router is wrapped with [`MetricsLayer`] so every request (including
-/// 404s) is counted in `renzu_http_requests_total`, error counts, and request
-/// duration. The meter provider is flushed on shutdown.
+async fn order_forward(
+    Extension(orders_client): Extension<reqwest::Client>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<axum::Json<serde_json::Value>, AppError> {
+    let span = tracing::Span::current();
+    span.record("order.id", &id);
+
+    let orders_url = std::env::var("RENZU_ORDERS_URL")
+        .unwrap_or_else(|_| "http://orders:8081".to_string());
+
+    let mut request = orders_client
+        .get(format!("{orders_url}/order/{id}"))
+        .header(CONTENT_TYPE.as_str(), "application/json");
+
+    if let Some(traceparent) = headers.get("traceparent") {
+        if let Ok(tp_str) = traceparent.to_str() {
+            request = request.header("traceparent", tp_str);
+        }
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(format!("orders request failed: {e}")))?;
+
+    let status = response.status().as_u16();
+    let body: serde_json::Value = response.json().await.map_err(|e| {
+        AppError::Internal(format!("orders response parse failed: {e}"))
+    })?;
+
+    span.record("orders.status", status.to_string().as_str());
+
+    Ok(axum::Json(serde_json::json!({
+        "order_id": id,
+        "gateway_status": "forwarded",
+        "orders": body,
+    })))
+}
+
 pub async fn run(config: Config) -> Result<(), AppError> {
     let addr: SocketAddr = config
         .bind_addr()
@@ -124,7 +144,14 @@ pub async fn run(config: Config) -> Result<(), AppError> {
             .await
             .map_err(|e| AppError::Internal(format!("database init error: {e}")))?,
     );
-    let app = app(pool.clone()).layer(MetricsLayer::new(metrics));
+
+    let orders_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| AppError::Internal(format!("orders client build failed: {e}")))?;
+
+    let app = app(pool.clone(), orders_client)
+        .layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
 
     let result = axum::serve(listener, app).await;
