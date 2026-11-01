@@ -6,6 +6,8 @@
 //! `docker compose`; `scenario`, `load-test`, and `report` remain stubs for
 //! F-016 through F-018.
 
+mod scenarios;
+
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread::sleep;
@@ -196,8 +198,8 @@ fn dispatch(command: Command) -> ExitCode {
         Command::Status { compose_file } => run_or_report(|| run_status(compose_file)),
         Command::Down { compose_file } => run_or_report(|| run_down(compose_file)),
         Command::Scenario(scenario) => match scenario {
-            Scenario::List => run_stub("scenario list"),
-            Scenario::Run { name } => run_stub(&format!("scenario run {name}")),
+            Scenario::List => run_or_report(scenario_list),
+            Scenario::Run { name } => run_or_report(|| scenario_run(&name)),
         },
         Command::LoadTest { scenario } => run_stub(&format!("load-test --scenario {scenario}")),
         Command::Report { run_id } => run_stub(&format!("report {run_id}")),
@@ -383,6 +385,58 @@ fn run_down(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
             "docker compose down failed: {}",
             String::from_utf8_lossy(&output.stderr)
         )))
+    }
+}
+
+/// List all available scenarios.
+fn scenario_list() -> Result<ExitCode, CliError> {
+    let registry = scenarios::default_registry();
+    println!("Available scenarios:");
+    for scenario in registry.scenarios() {
+        let fault_desc = match &scenario.fault {
+            scenarios::FaultType::None => "none (baseline)".to_string(),
+            scenarios::FaultType::DatabaseLatency(d) => {
+                format!("database latency ({}ms)", d.as_millis())
+            }
+            scenarios::FaultType::DownstreamTimeout(d) => {
+                format!("downstream timeout ({}s)", d.as_secs())
+            }
+            scenarios::FaultType::ControlledError(msg) => {
+                format!("controlled error: {msg}")
+            }
+            scenarios::FaultType::CascadingFailure => {
+                "cascading failure (db latency + downstream timeout)".to_string()
+            }
+        };
+        println!(
+            "  {:<20} - {} ({})",
+            scenario.name, scenario.description, fault_desc
+        );
+    }
+    Ok(ExitCode::from(0))
+}
+
+/// Run a named scenario against the local environment.
+fn scenario_run(name: &str) -> Result<ExitCode, CliError> {
+    match scenarios::runner::run_scenario(name) {
+        Ok(result) => {
+            if result.success {
+                println!(
+                    "scenario '{}' completed in {:?}",
+                    result.name, result.duration
+                );
+                Ok(ExitCode::from(0))
+            } else {
+                eprintln!(
+                    "scenario '{}' failed in {:?}: {}",
+                    result.name,
+                    result.duration,
+                    result.error.unwrap_or_default()
+                );
+                Ok(ExitCode::from(1))
+            }
+        }
+        Err(err) => Err(CliError::Internal(err)),
     }
 }
 
