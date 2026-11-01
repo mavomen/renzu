@@ -330,7 +330,7 @@ Dependencies: F-006, F-007, F-008. (F-006 and F-007 provide the instrumentation 
 
 ### F-013: Log Pipeline and Trace Correlation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Ship application logs to the chosen backend and connect them with distributed traces.
 
@@ -396,7 +396,7 @@ Dependencies: F-003, F-014.
 
 ### F-016: Baseline and Fault-Injection Scenarios
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Provide reproducible system behaviors for investigation.
 

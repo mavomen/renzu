@@ -210,7 +210,8 @@ async fn ready_endpoint_returns_ready() {
         .timeout(std::time::Duration::from_secs(1))
         .build()
         .expect("client");
-    let router = gateway::server::app(pool, orders_client);
+    let fault_state = Arc::new(gateway::server::FaultState::default());
+    let router = gateway::server::app(pool, orders_client, fault_state);
     let request = Request::builder()
         .uri("/ready")
         .method("GET")
@@ -266,7 +267,7 @@ async fn unknown_route_returns_not_found() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-/// Build a test router with a database pool.
+/// Build a test router with a database pool and fault state.
 ///
 /// Uses `connect_lazy` so no real database connection is established;
 /// database-dependent endpoints will return "not ready" gracefully.
@@ -281,7 +282,8 @@ fn test_app() -> Router {
         .timeout(std::time::Duration::from_secs(1))
         .build()
         .expect("orders client should be created");
-    gateway::server::app(pool, orders_client)
+    let fault_state = Arc::new(gateway::server::FaultState::default());
+    gateway::server::app(pool, orders_client, fault_state)
 }
 
 /// Collect an axum response body into bytes.
@@ -428,4 +430,142 @@ async fn order_forward_propagates_traceparent() {
         .expect("service should respond");
     // Orders service unavailable, but traceparent was forwarded without panic
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn enable_db_latency_fault() {
+    let router = test_app();
+    let request = Request::builder()
+        .uri("/faults/database-latency")
+        .method("POST")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "database-latency");
+    assert_eq!(value["enabled"], true);
+}
+
+#[tokio::test]
+async fn disable_db_latency_fault() {
+    let router = test_app();
+    // First enable
+    let request = Request::builder()
+        .uri("/faults/database-latency")
+        .method("POST")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let _ = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+
+    // Then disable
+    let request = Request::builder()
+        .uri("/faults/database-latency")
+        .method("DELETE")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "database-latency");
+    assert_eq!(value["enabled"], false);
+}
+
+#[tokio::test]
+async fn enable_controlled_error_fault() {
+    let router = test_app();
+    let request = Request::builder()
+        .uri("/faults/controlled-error")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(r#"{"message":"test error"}"#))
+        .unwrap();
+
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "controlled-error");
+    assert_eq!(value["enabled"], true);
+    assert_eq!(value["message"], "test error");
+}
+
+#[tokio::test]
+async fn controlled_error_returns_error_from_order() {
+    let router = test_app();
+    // Enable controlled error fault
+    let request = Request::builder()
+        .uri("/faults/controlled-error")
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(
+            r#"{"message":"simulated gateway error"}"#,
+        ))
+        .unwrap();
+    let _ = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+
+    // Now order should return 500
+    let request = Request::builder()
+        .uri("/order/123")
+        .method("GET")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
+async fn downstream_timeout_fault_toggle() {
+    let router = test_app();
+    // Enable
+    let request = Request::builder()
+        .uri("/faults/downstream-timeout")
+        .method("POST")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Disable
+    let request = Request::builder()
+        .uri("/faults/downstream-timeout")
+        .method("DELETE")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
 }
