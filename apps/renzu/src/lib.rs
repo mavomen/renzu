@@ -427,6 +427,12 @@ fn scenario_list() -> Result<ExitCode, CliError> {
             scenarios::FaultType::CascadingFailure => {
                 "cascading failure (db latency + downstream timeout)".to_string()
             }
+            scenarios::FaultType::CollectorUnavailable => {
+                "telemetry collector unavailable (app responds, export broken)".to_string()
+            }
+            scenarios::FaultType::DatabaseConnectionFailure => {
+                "database connection failure (gateway degrades)".to_string()
+            }
         };
         println!(
             "  {:<20} - {} ({})",

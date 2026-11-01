@@ -166,3 +166,91 @@ fn up_with_missing_compose_file_exits_one() {
         .expect("failed to execute renzu binary");
     assert_eq!(output.status.code(), Some(1));
 }
+
+#[test]
+fn otel_collector_down_scenario_repro_and_recovery() {
+    if !docker_compose_available() {
+        eprintln!("skipping otel-collector-down scenario test: docker compose is not available");
+        return;
+    }
+    let up = renzu()
+        .arg("up")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "renzu up failed: {}",
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    // The telemetry collector is unavailable: the app still responds, so the
+    // scenario completes successfully (exit 0).
+    let run = renzu()
+        .arg("scenario")
+        .arg("run")
+        .arg("otel-collector-down")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "otel-collector-down scenario failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let down = renzu()
+        .arg("down")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(
+        down.status.code(),
+        Some(0),
+        "renzu down failed: {}",
+        String::from_utf8_lossy(&down.stderr)
+    );
+}
+
+#[test]
+fn db_connection_failure_scenario_repro_and_recovery() {
+    if !docker_compose_available() {
+        eprintln!("skipping db-connection-failure scenario test: docker compose is not available");
+        return;
+    }
+    let up = renzu()
+        .arg("up")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(
+        up.status.code(),
+        Some(0),
+        "renzu up failed: {}",
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    // The database connection is down: the gateway degrades but still
+    // responds, so the scenario completes successfully (exit 0).
+    let run = renzu()
+        .arg("scenario")
+        .arg("run")
+        .arg("db-connection-failure")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "db-connection-failure scenario failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
+    let down = renzu()
+        .arg("down")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(
+        down.status.code(),
+        Some(0),
+        "renzu down failed: {}",
+        String::from_utf8_lossy(&down.stderr)
+    );
+}

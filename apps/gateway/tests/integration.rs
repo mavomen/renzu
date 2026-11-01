@@ -569,3 +569,144 @@ async fn downstream_timeout_fault_toggle() {
         .expect("service should respond");
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn otel_collector_fault_toggle() {
+    let router = test_app();
+    // Enable
+    let request = Request::builder()
+        .uri("/faults/otel-collector")
+        .method("POST")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "otel-collector");
+    assert_eq!(value["enabled"], true);
+
+    // Disable
+    let request = Request::builder()
+        .uri("/faults/otel-collector")
+        .method("DELETE")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "otel-collector");
+    assert_eq!(value["enabled"], false);
+}
+
+#[tokio::test]
+async fn database_connection_fault_toggle() {
+    let router = test_app();
+    // Enable
+    let request = Request::builder()
+        .uri("/faults/database-connection")
+        .method("POST")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "database-connection");
+    assert_eq!(value["enabled"], true);
+
+    // With the fault enabled, /db/health reports the database as unreachable.
+    let request = Request::builder()
+        .uri("/db/health")
+        .method("GET")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    // And /ready reports not ready.
+    let request = Request::builder()
+        .uri("/ready")
+        .method("GET")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["status"], "not ready");
+
+    // Disable
+    let request = Request::builder()
+        .uri("/faults/database-connection")
+        .method("DELETE")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["fault"], "database-connection");
+    assert_eq!(value["enabled"], false);
+}
+
+#[tokio::test]
+async fn root_endpoint_lists_new_fault_endpoints() {
+    let router = test_app();
+    let request = Request::builder()
+        .uri("/")
+        .method("GET")
+        .body(axum::body::Body::empty())
+        .unwrap();
+
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("service should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bytes = collect_body(response).await;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let endpoints = value["endpoints"]
+        .as_array()
+        .expect("endpoints should be an array");
+    let endpoint_names: Vec<String> = endpoints
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
+    assert!(
+        endpoint_names.contains(&"/faults/otel-collector".to_string()),
+        "endpoints missing /faults/otel-collector: {endpoint_names:?}"
+    );
+    assert!(
+        endpoint_names.contains(&"/faults/database-connection".to_string()),
+        "endpoints missing /faults/database-connection: {endpoint_names:?}"
+    );
+}
