@@ -242,9 +242,10 @@ Acceptance criteria:
 
 Dependencies: F-007.
 
+
 ### F-009: Metrics Instrumentation
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Expose application health and performance metrics.
 
@@ -265,7 +266,7 @@ Dependencies: F-004, F-007.
 
 ### F-010: Metrics Dashboards
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Make service health and performance easy to inspect.
 

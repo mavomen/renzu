@@ -33,6 +33,8 @@ exporters:
   # is its replacement and is used here as the local metrics placeholder. F-010
   # swaps this for Prometheus once that backend exists.
   debug:
+  prometheus:
+    endpoint: 0.0.0.0:9464
 
 processors:
   batch:
@@ -47,4 +49,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [prometheus]

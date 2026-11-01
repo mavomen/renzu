@@ -9,6 +9,7 @@ use tracing::{info, instrument, Span};
 
 use crate::config::Config;
 use crate::error::AppError;
+use crate::metrics::MetricsLayer;
 
 /// Health check response.
 #[derive(serde::Serialize)]
@@ -73,6 +74,10 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 /// Start the HTTP server bound to the address derived from `config`.
+///
+/// The router is wrapped with [`MetricsLayer`] so every request (including
+/// 404s) is counted in `renzu_http_requests_total`, error counts, and request
+/// duration. The meter provider is flushed on shutdown.
 pub async fn run(config: Config) -> Result<(), AppError> {
     let addr: SocketAddr = config
         .bind_addr()
@@ -81,9 +86,13 @@ pub async fn run(config: Config) -> Result<(), AppError> {
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
         AppError::Internal(format!("failed to bind to {}: {e}", config.bind_addr()))
     })?;
+    let metrics = crate::metrics::Metrics::init()
+        .map_err(|e| AppError::Internal(format!("metrics init error: {e}")))?;
+    let metrics_handle = metrics.clone();
+    let app = app().layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
-    axum::serve(listener, app())
-        .await
-        .map_err(|e| AppError::Internal(format!("server error: {e}")))?;
+    let result = axum::serve(listener, app).await;
+    let _ = metrics_handle.shutdown();
+    result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
     Ok(())
 }

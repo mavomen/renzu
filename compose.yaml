@@ -1,6 +1,6 @@
-# Docker Compose for the F-003 local observability environment.
-# Scope: OpenTelemetry Collector + Jaeger only (M1 slice). No application
-# services yet; the first Rust crate lands in F-004.
+# Docker Compose for the local observability environment.
+# Scope: OpenTelemetry Collector + Jaeger + Prometheus + Grafana (M1 slice).
+# No application services yet; the first Rust crate lands in F-004.
 #
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
 # Image tags are pinned explicitly (no :latest) (PRD NFR-01).
@@ -36,6 +36,7 @@ services:
     ports:
       - "127.0.0.1:4317:4317"   # OTLP gRPC receiver
       - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
+      - "127.0.0.1:9464:9464"   # Prometheus-format metrics endpoint (scraped by Prometheus)
     volumes:
       - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     command: ["--config=/etc/otelcol/config.yaml"]
@@ -53,3 +54,47 @@ services:
       start_period: 15s
     # Startup ordering is still enforced: the Collector waits for Jaeger to
     # report healthy via depends_on condition: service_healthy.
+
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    container_name: renzu-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"   # Prometheus query UI + API
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.listen-address=0.0.0.0:9090"
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: renzu-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"   # Grafana UI
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
