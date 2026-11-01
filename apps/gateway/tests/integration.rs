@@ -2,7 +2,7 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
-use gateway::server::app;
+
 use gateway::telemetry::{Redacted, Telemetry};
 use http_body_util::{BodyExt, Empty};
 use hyper_util::rt::TokioIo;
@@ -11,6 +11,7 @@ use opentelemetry_proto::tonic::{
     common::v1::AnyValue,
 };
 use prost::Message;
+use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
@@ -114,7 +115,7 @@ async fn health_span_exported_to_otlp_receiver() {
     std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
     let telemetry = Telemetry::init("info").expect("telemetry should initialize");
 
-    let router: Router = app();
+    let router = test_app();
     let request = Request::builder()
         .uri("/health")
         .method("GET")
@@ -151,7 +152,7 @@ async fn health_span_exported_to_otlp_receiver() {
 
 #[tokio::test]
 async fn health_endpoint_returns_healthy() {
-    let router: Router = app();
+    let router = test_app();
     let request = Request::builder()
         .uri("/health")
         .method("GET")
@@ -172,7 +173,40 @@ async fn health_endpoint_returns_healthy() {
 
 #[tokio::test]
 async fn ready_endpoint_returns_ready() {
-    let router: Router = app();
+    // Only assert "ready" when a real test database is available.
+    // With a lazy pool (no DB), the endpoint returns "not ready" gracefully.
+    if std::env::var("RENZU_TEST_DATABASE_URL").is_err() {
+        // No test database: verify the endpoint responds and reports not ready.
+        let router = test_app();
+        let request = Request::builder()
+            .uri("/ready")
+            .method("GET")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("service should respond");
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let bytes = collect_body(response).await;
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["status"], "not ready");
+        assert_eq!(value["service"], "gateway");
+        return;
+    }
+
+    // Real test database available: verify the endpoint reports ready.
+    let pool = Arc::new({
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&std::env::var("RENZU_TEST_DATABASE_URL").unwrap())
+            .await
+            .expect("test database should be reachable");
+        pool
+    });
+    let router = gateway::server::app(pool);
     let request = Request::builder()
         .uri("/ready")
         .method("GET")
@@ -193,7 +227,7 @@ async fn ready_endpoint_returns_ready() {
 
 #[tokio::test]
 async fn root_endpoint_returns_metadata() {
-    let router: Router = app();
+    let router = test_app();
     let request = Request::builder()
         .uri("/")
         .method("GET")
@@ -214,7 +248,7 @@ async fn root_endpoint_returns_metadata() {
 
 #[tokio::test]
 async fn unknown_route_returns_not_found() {
-    let router: Router = app();
+    let router = test_app();
     let request = Request::builder()
         .uri("/no-such-route")
         .method("GET")
@@ -226,6 +260,20 @@ async fn unknown_route_returns_not_found() {
         .await
         .expect("service should respond");
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+/// Build a test router with a database pool.
+///
+/// Uses `connect_lazy` so no real database connection is established;
+/// database-dependent endpoints will return "not ready" gracefully.
+fn test_app() -> Router {
+    let pool = Arc::new(
+        PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://renzu:renzu@127.0.0.1:5432/renzu")
+            .expect("test database pool should be created"),
+    );
+    gateway::server::app(pool)
 }
 
 /// Collect an axum response body into bytes.

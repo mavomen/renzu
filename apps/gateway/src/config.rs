@@ -13,6 +13,8 @@ pub struct Config {
     pub port: u16,
     /// tracing log level (off, error, warn, info, debug, trace).
     pub log_level: String,
+    /// PostgreSQL connection URL.
+    pub database_url: String,
 }
 
 impl Config {
@@ -22,6 +24,7 @@ impl Config {
     /// - `RENZU_HOST` (default `127.0.0.1`)
     /// - `RENZU_PORT` (default `8080`)
     /// - `RENZU_LOG_LEVEL` (default `info`)
+    /// - `RENZU_DATABASE_URL` (default `postgres://renzu:renzu@127.0.0.1:5432/renzu`, local-only)
     pub fn from_env() -> Result<Config, ConfigError> {
         let host = std::env::var("RENZU_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let port: u16 = std::env::var("RENZU_PORT")
@@ -29,6 +32,8 @@ impl Config {
             .parse()
             .map_err(ConfigError::InvalidPort)?;
         let log_level = std::env::var("RENZU_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+        let database_url = std::env::var("RENZU_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://renzu:renzu@127.0.0.1:5432/renzu".to_string());
 
         let addr: SocketAddr = format!("{host}:{port}")
             .parse()
@@ -40,6 +45,7 @@ impl Config {
             host,
             port,
             log_level,
+            database_url,
         })
     }
 

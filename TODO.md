@@ -6,3 +6,4 @@ F-007: OpenTelemetry Collector Pipeline — IN_PROGRESS (branch feat/f-007-otel-
 F-008: Distributed Trace Visualization — IN_PROGRESS (branch feat/f-008-distributed-trace-visualization; E2E script + CI steps + runbook docs).
 F-009: Metrics Instrumentation — IN_PROGRESS (branch feat/f-009-metrics-instrumentation; OpenTelemetry metrics provider, request rate/error/duration instruments with low-cardinality http.method/http.status_code labels, tower MetricsLayer, unit tests with in-memory exporter).
 F-010: Metrics Dashboards — IN_PROGRESS (branch feat/f-010-metrics-dashboards; stacked on F-009; Prometheus + Grafana in compose, collector metrics pipeline to Prometheus, Grafana datasource + initial dashboard).
+F-011: PostgreSQL Integration — IN_PROGRESS (branch feat/f-011-postgresql-integration; PostgreSQL in compose.yaml, sqlx connection pool, DB-backed route, traced DB operations, readiness uses DB health).
