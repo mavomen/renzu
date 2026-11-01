@@ -4,8 +4,10 @@
 //! error-handling conventions, and stable exit codes. `up`, `status`, and
 //! `down` drive the local observability environment (`compose.yaml`) through
 //! `docker compose`; `scenario` and `load-test` drive fault-injection
-//! experiments; `report` reads a saved experiment report from disk.
+//! experiments; `report` reads a saved experiment report from disk; `compare`
+//! compares two saved experiment reports and prints metric deltas.
 
+mod compare;
 mod loadgen;
 mod report;
 mod scenarios;
@@ -32,7 +34,7 @@ struct Cli {
 ///
 /// Every planned subcommand is listed as a variant so `--help` surfaces
 /// the full command surface immediately. `scenario` was implemented by
-/// F-016, `load-test` by F-017, and `report` by F-018.
+/// F-016, `load-test` by F-017, `report` by F-018, and `compare` by F-020.
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Bring up the local observability environment.
@@ -87,6 +89,13 @@ enum Command {
     Report {
         /// Run identifier to report on.
         run_id: String,
+    },
+    /// Compare two saved experiment reports and print metric deltas.
+    Compare {
+        /// Identifier of the baseline run.
+        left: String,
+        /// Identifier of the run to compare against the baseline.
+        right: String,
     },
 }
 
@@ -223,6 +232,7 @@ fn dispatch(command: Command) -> ExitCode {
             url,
         } => run_or_report(|| load_test(scenario, duration, rate, concurrency, url)),
         Command::Report { run_id } => run_or_report(move || report_command(run_id)),
+        Command::Compare { left, right } => run_or_report(move || compare_command(left, right)),
     }
 }
 
@@ -538,5 +548,36 @@ fn report_command(run_id: String) -> Result<ExitCode, CliError> {
         Err(err) => Err(CliError::Orchestration(format!(
             "failed to read report {run_id}: {err}"
         ))),
+    }
+}
+
+/// Compare two saved experiment reports and print a delta table to stdout.
+///
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1); the
+/// failure is never silently reported as success.
+fn compare_command(left: String, right: String) -> Result<ExitCode, CliError> {
+    match compare::compare(&left, &right) {
+        Ok(comparison) => {
+            compare::print_comparison(&comparison);
+            Ok(ExitCode::from(0))
+        }
+        Err(err) => {
+            let run_id = if report::read_report(&left).is_err() {
+                &left
+            } else {
+                &right
+            };
+            Err(report_read_error(run_id, err))
+        }
+    }
+}
+
+/// Convert a report read error into a [`CliError::Orchestration`], naming the
+/// run ID that could not be read.
+fn report_read_error(run_id: &str, err: std::io::Error) -> CliError {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        CliError::Orchestration(format!("unknown run id: {run_id}"))
+    } else {
+        CliError::Orchestration(format!("failed to read report {run_id}: {err}"))
     }
 }

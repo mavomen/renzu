@@ -87,6 +87,148 @@ fn report_reads_saved_report() {
     let _ = fs::remove_dir(&reports_dir);
 }
 
+#[test]
+fn compare_unknown_run_id_exits_one() {
+    let output = renzu()
+        .arg("compare")
+        .arg("does-not-exist")
+        .arg("also-missing")
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("unknown run id: does-not-exist"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn compare_prints_delta_table() {
+    let run_a = "compare-left";
+    let run_b = "compare-right";
+    let reports_dir = workspace_root().join("reports");
+    fs::create_dir_all(&reports_dir).expect("create reports dir");
+    let write = |run_id: &str,
+                 scenario: &str,
+                 kind: &str,
+                 value: u64,
+                 throughput: f64,
+                 total: u64| {
+        let path = reports_dir.join(format!("{run_id}.json"));
+        let json = format!(
+            r#"{{
+  "run_id": "{run_id}",
+  "scenario": "{scenario}",
+  "start_time": "2026-01-01T00:00:00Z",
+  "duration_secs": 10,
+  "completion_status": "complete",
+  "workload": {{"scenario": "{scenario}", "duration_secs": 10, "kind": "{kind}", "value": {value}, "url": "http://127.0.0.1:8080/health"}},
+  "counts": {{"total": {total}, "successful": {total}, "failed": 0}},
+  "latency": {{"count": {total}, "min_ms": 1.0, "max_ms": 10.0, "mean_ms": 5.0, "p50_ms": 5.0, "p95_ms": 9.0, "p99_ms": 10.0}},
+  "throughput_rps": {throughput},
+  "telemetry_references": [],
+  "warnings": []
+}}"#
+        );
+        fs::write(&path, json).expect("write report fixture");
+    };
+    write(run_a, "baseline", "rate", 20, 10.0, 100);
+    write(run_b, "baseline", "rate", 20, 12.0, 120);
+
+    let output = renzu()
+        .arg("compare")
+        .arg(run_a)
+        .arg(run_b)
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Performance comparison"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains(run_a), "stdout missing run a: {stdout}");
+    assert!(stdout.contains(run_b), "stdout missing run b: {stdout}");
+    assert!(
+        stdout.contains("baseline"),
+        "stdout missing scenario: {stdout}"
+    );
+    assert!(
+        stdout.contains("+20.00%"),
+        "stdout missing throughput delta: {stdout}"
+    );
+    assert!(
+        !stdout.contains("incompatible"),
+        "unexpected incompatible warning: {stdout}"
+    );
+
+    let _ = fs::remove_file(reports_dir.join(format!("{run_a}.json")));
+    let _ = fs::remove_file(reports_dir.join(format!("{run_b}.json")));
+    let _ = fs::remove_dir(&reports_dir);
+}
+
+#[test]
+fn compare_flags_incompatible_runs() {
+    let run_a = "compare-left-incompat";
+    let run_b = "compare-right-incompat";
+    let reports_dir = workspace_root().join("reports");
+    fs::create_dir_all(&reports_dir).expect("create reports dir");
+    let write = |run_id: &str,
+                 scenario: &str,
+                 kind: &str,
+                 value: u64,
+                 throughput: f64,
+                 total: u64| {
+        let path = reports_dir.join(format!("{run_id}.json"));
+        let json = format!(
+            r#"{{
+  "run_id": "{run_id}",
+  "scenario": "{scenario}",
+  "start_time": "2026-01-01T00:00:00Z",
+  "duration_secs": 10,
+  "completion_status": "complete",
+  "workload": {{"scenario": "{scenario}", "duration_secs": 10, "kind": "{kind}", "value": {value}, "url": "http://127.0.0.1:8080/health"}},
+  "counts": {{"total": {total}, "successful": {total}, "failed": 0}},
+  "latency": {{"count": {total}, "min_ms": 1.0, "max_ms": 10.0, "mean_ms": 5.0, "p50_ms": 5.0, "p95_ms": 9.0, "p99_ms": 10.0}},
+  "throughput_rps": {throughput},
+  "telemetry_references": [],
+  "warnings": []
+}}"#
+        );
+        fs::write(&path, json).expect("write report fixture");
+    };
+    write(run_a, "baseline", "rate", 20, 10.0, 100);
+    write(run_b, "faulted", "rate", 20, 8.0, 80);
+
+    let output = renzu()
+        .arg("compare")
+        .arg(run_a)
+        .arg(run_b)
+        .output()
+        .expect("failed to execute renzu binary");
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("incompatible"),
+        "stdout missing incompatible warning: {stdout}"
+    );
+    assert!(
+        stdout.contains("WARNING"),
+        "stdout missing warning prefix: {stdout}"
+    );
+    assert!(
+        stdout.contains("scenario differs"),
+        "stdout missing scenario reason: {stdout}"
+    );
+    assert!(stdout.contains(run_a), "stdout missing run a: {stdout}");
+    assert!(stdout.contains(run_b), "stdout missing run b: {stdout}");
+
+    let _ = fs::remove_file(reports_dir.join(format!("{run_a}.json")));
+    let _ = fs::remove_file(reports_dir.join(format!("{run_b}.json")));
+    let _ = fs::remove_dir(&reports_dir);
+}
+
 fn docker_compose_available() -> bool {
     std::process::Command::new("docker")
         .arg("compose")
