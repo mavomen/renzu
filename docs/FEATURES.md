@@ -137,7 +137,7 @@ Dependencies: F-002.
 
 ### F-004: Rust HTTP Service
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Establish the first independently runnable application service.
 
@@ -180,7 +180,7 @@ Dependencies: F-001 (log field conventions), F-004.
 
 ### F-006: Distributed Trace Instrumentation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Trace operations within an application service.
 
@@ -202,7 +202,7 @@ Dependencies: F-003, F-004.
 
 ### F-007: OpenTelemetry Collector Pipeline
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Centralize telemetry collection and export.
 
