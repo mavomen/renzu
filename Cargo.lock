@@ -1604,6 +1604,7 @@ dependencies = [
  "prost 0.14.4",
  "reqwest 0.13.5",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1637,6 +1638,7 @@ dependencies = [
  "rand 0.9.5",
  "thiserror",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

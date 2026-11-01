@@ -117,7 +117,18 @@ pub fn app(
         .layer(Extension(pool))
         .layer(Extension(orders_client))
         .layer(Extension(fault_state))
-        .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                |req: &axum::http::Request<_>| {
+                    tracing::span!(
+                        tracing::Level::INFO,
+                        "http.request",
+                        method = %req.method(),
+                        route = %req.uri().path(),
+                    )
+                },
+            ),
+        )
 }
 
 async fn health() -> Json<HealthResponse> {
