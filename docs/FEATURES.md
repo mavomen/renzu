@@ -242,9 +242,10 @@ Acceptance criteria:
 
 Dependencies: F-007.
 
+
 ### F-009: Metrics Instrumentation
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Expose application health and performance metrics.
 
