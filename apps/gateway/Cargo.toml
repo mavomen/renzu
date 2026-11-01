@@ -3,6 +3,9 @@ name = "gateway"
 version = "0.0.0"
 edition = "2021"
 
+[features]
+profiling = ["console-subscriber"]
+
 [dependencies]
 tokio = { workspace = true }
 axum = { workspace = true }
@@ -19,6 +22,7 @@ opentelemetry-otlp = { workspace = true, features = ["metrics"] }
 tracing-opentelemetry = { workspace = true }
 sqlx = { workspace = true }
 reqwest = { workspace = true }
+console-subscriber = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }

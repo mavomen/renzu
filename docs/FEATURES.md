@@ -478,7 +478,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 Scope:
 - Establish reproducible CPU profiling.
