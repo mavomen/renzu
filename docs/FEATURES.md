@@ -496,7 +496,7 @@ Dependencies: F-018.
 ### F-020: Performance Comparison Reports
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 Scope:
 - Compare any two experiment runs (generalizing the baseline-vs-faulted view from F-018).
