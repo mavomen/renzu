@@ -11,6 +11,7 @@ mod compare;
 mod loadgen;
 mod report;
 mod scenarios;
+pub mod telemetry;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
