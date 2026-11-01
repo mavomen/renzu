@@ -12,6 +12,7 @@
 use crate::scenarios::default_registry;
 use crate::scenarios::runner;
 use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
 use std::sync::mpsc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -68,12 +69,27 @@ pub struct LatencyStats {
 /// Outcome of a load test run.
 #[derive(Debug, Clone)]
 pub struct LoadTestResult {
+    /// Unique identifier assigned to this run (set by the CLI before report
+    /// writing; empty while the result is still in loadgen's ownership).
+    pub run_id: String,
+    /// Whether the workload finished and fault cleanup was verified.
+    pub completion_status: CompletionStatus,
     pub config: LoadTestConfig,
     pub total: u64,
     pub successful: u64,
     pub failed: u64,
     pub throughput_rps: f64,
     pub latency: LatencyStats,
+}
+
+/// Completion status of an experiment run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CompletionStatus {
+    /// The workload finished and fault cleanup was verified.
+    Complete,
+    /// The run was interrupted or cleanup failed.
+    Incomplete,
 }
 
 impl LoadTestResult {
@@ -126,8 +142,6 @@ pub enum LoadTestError {
     GatewayUnreachable(String),
     #[error("failed to enable fault: {0}")]
     EnableFault(String),
-    #[error("failed to disable fault: {0}")]
-    DisableFault(String),
     #[error("HTTP error: {0}")]
     HttpClient(String),
 }
@@ -139,9 +153,9 @@ impl LoadTestError {
             LoadTestError::InvalidConfig(_) | LoadTestError::UnknownScenario(_) => {
                 crate::CliError::Usage(self.to_string())
             }
-            LoadTestError::GatewayUnreachable(_)
-            | LoadTestError::EnableFault(_)
-            | LoadTestError::DisableFault(_) => crate::CliError::Orchestration(self.to_string()),
+            LoadTestError::GatewayUnreachable(_) | LoadTestError::EnableFault(_) => {
+                crate::CliError::Orchestration(self.to_string())
+            }
             LoadTestError::HttpClient(_) => crate::CliError::Internal(self.to_string()),
         }
     }
@@ -224,17 +238,26 @@ pub fn run_load_test(config: &LoadTestConfig) -> Result<LoadTestResult, LoadTest
     let generate_result = generate_load(&client, config);
     let disable_result = runner::disable_fault(&client, scenario);
 
-    match generate_result {
-        Ok(result) => {
-            disable_result.map_err(LoadTestError::DisableFault)?;
-            Ok(result)
-        }
+    let mut result = match generate_result {
+        Ok(result) => result,
         Err(e) => {
             // Best-effort cleanup on failure; the generation error takes priority.
             let _ = disable_result;
-            Err(e)
+            return Err(e);
         }
-    }
+    };
+
+    // Completion status: complete only if the workload finished and cleanup
+    // was verified (ARCHITECTURE §6). A failed cleanup is reported as
+    // incomplete, never silenced, but it is not a hard error — the experiment
+    // did run and produced a result.
+    result.completion_status = if disable_result.is_ok() {
+        CompletionStatus::Complete
+    } else {
+        CompletionStatus::Incomplete
+    };
+
+    Ok(result)
 }
 
 /// Generate load against the target URL for the configured duration.
@@ -280,6 +303,8 @@ fn generate_load(
     let latency = compute_latency_stats(&latencies);
 
     Ok(LoadTestResult {
+        run_id: String::new(),
+        completion_status: CompletionStatus::Incomplete,
         config: config.clone(),
         total,
         successful,

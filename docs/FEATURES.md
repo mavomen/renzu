@@ -446,7 +446,7 @@ Dependencies: F-012, F-014.
 
 ### F-018: Experiment Reports and End-to-End Verification
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Turn scenario executions into reproducible investigations.
 
