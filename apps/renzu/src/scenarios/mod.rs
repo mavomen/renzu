@@ -31,6 +31,12 @@ pub enum FaultType {
     ControlledError(String),
     /// Chain multiple faults together (database latency + downstream timeout).
     CascadingFailure,
+    /// Telemetry collector unavailable: the application still responds but
+    /// telemetry export is broken.
+    CollectorUnavailable,
+    /// Database connection failure: the gateway degrades because the database
+    /// is unreachable.
+    DatabaseConnectionFailure,
 }
 
 /// Outcome of running a scenario.
@@ -103,6 +109,17 @@ impl ScenarioRegistry {
                 description: "Chain database latency and downstream timeout.".to_string(),
                 fault: FaultType::CascadingFailure,
             },
+            Scenario {
+                name: "otel-collector-down".to_string(),
+                description: "Make the telemetry collector unavailable (app still responds)."
+                    .to_string(),
+                fault: FaultType::CollectorUnavailable,
+            },
+            Scenario {
+                name: "db-connection-failure".to_string(),
+                description: "Break database connectivity (gateway degrades).".to_string(),
+                fault: FaultType::DatabaseConnectionFailure,
+            },
         ];
         Self { scenarios }
     }
@@ -121,6 +138,53 @@ impl ScenarioRegistry {
 /// Return the default registry of built-in scenarios.
 pub fn default_registry() -> ScenarioRegistry {
     ScenarioRegistry::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_contains_new_failure_scenarios() {
+        let registry = default_registry();
+        let names: Vec<&str> = registry
+            .scenarios()
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(names.contains(&"otel-collector-down"));
+        assert!(names.contains(&"db-connection-failure"));
+    }
+
+    #[test]
+    fn otel_collector_down_has_collector_unavailable_fault() {
+        let registry = default_registry();
+        let scenario = registry.find("otel-collector-down").unwrap();
+        assert_eq!(scenario.fault, FaultType::CollectorUnavailable);
+    }
+
+    #[test]
+    fn db_connection_failure_has_database_connection_fault() {
+        let registry = default_registry();
+        let scenario = registry.find("db-connection-failure").unwrap();
+        assert_eq!(scenario.fault, FaultType::DatabaseConnectionFailure);
+    }
+
+    #[test]
+    fn fault_type_variants_compare_equal() {
+        assert_eq!(
+            FaultType::CollectorUnavailable,
+            FaultType::CollectorUnavailable
+        );
+        assert_eq!(
+            FaultType::DatabaseConnectionFailure,
+            FaultType::DatabaseConnectionFailure
+        );
+        assert_ne!(
+            FaultType::CollectorUnavailable,
+            FaultType::DatabaseConnectionFailure
+        );
+    }
 }
 
 pub mod runner;

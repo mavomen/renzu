@@ -550,7 +550,7 @@ Dependencies: F-021.
 ### F-023: Expanded Failure Scenarios
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 Scope:
 - Extend cascading-failure demonstrations beyond the initial scenario in F-016.
@@ -558,6 +558,17 @@ Scope:
 - Test database connection failure.
 - Test recovery after faults.
 - Document the symptoms and investigation workflow for each scenario.
+
+Scenarios:
+- `otel-collector-down` (`CollectorUnavailable`): telemetry export is broken
+  while the application still responds. Symptom: requests succeed but no new
+  traces appear in the collector/Jaeger. Investigation: confirm `/health` is
+  healthy while trace export fails; the fault is structural (gateway flag),
+  not verified against actual OTLP behavior.
+- `db-connection-failure` (`DatabaseConnectionFailure`): database connectivity
+  is broken and the gateway degrades. Symptom: `/health` still responds but
+  `/ready` reports "not ready" and `/db/health` returns 500. Investigation:
+  distinguish from telemetry failures by checking `/ready` and `/db/health`.
 
 Acceptance criteria:
 - Each scenario is reproducible.

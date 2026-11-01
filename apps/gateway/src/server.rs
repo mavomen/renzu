@@ -37,6 +37,8 @@ pub struct FaultState {
     db_latency: Arc<Mutex<bool>>,
     downstream_timeout: Arc<Mutex<bool>>,
     controlled_error: Arc<Mutex<bool>>,
+    otel_collector: Arc<Mutex<bool>>,
+    database_connection: Arc<Mutex<bool>>,
 }
 
 impl FaultState {
@@ -63,6 +65,22 @@ impl FaultState {
     fn set_controlled_error(&self, enabled: bool) {
         *self.controlled_error.lock().unwrap() = enabled;
     }
+
+    pub fn is_otel_collector_enabled(&self) -> bool {
+        *self.otel_collector.lock().unwrap()
+    }
+
+    pub fn set_otel_collector(&self, enabled: bool) {
+        *self.otel_collector.lock().unwrap() = enabled;
+    }
+
+    fn is_database_connection_enabled(&self) -> bool {
+        *self.database_connection.lock().unwrap()
+    }
+
+    fn set_database_connection(&self, enabled: bool) {
+        *self.database_connection.lock().unwrap() = enabled;
+    }
 }
 
 pub fn app(
@@ -88,6 +106,14 @@ pub fn app(
             "/faults/controlled-error",
             post(enable_controlled_error).delete(disable_controlled_error),
         )
+        .route(
+            "/faults/otel-collector",
+            post(enable_otel_collector).delete(disable_otel_collector),
+        )
+        .route(
+            "/faults/database-connection",
+            post(enable_database_connection).delete(disable_database_connection),
+        )
         .layer(Extension(pool))
         .layer(Extension(orders_client))
         .layer(Extension(fault_state))
@@ -112,6 +138,14 @@ async fn ready(
         sleep(Duration::from_millis(200)).await;
     }
 
+    // Database connection failure: the gateway degrades and reports not ready.
+    if fault_state.is_database_connection_enabled() {
+        return Ok(Json(ReadyResponse {
+            status: "not ready".to_string(),
+            service: "gateway".to_string(),
+        }));
+    }
+
     let status = match db::health_check(&pool).await {
         Ok(()) => "ready",
         Err(_) => "not ready",
@@ -130,13 +164,20 @@ async fn root() -> Json<serde_json::Value> {
     Json(json!({
         "service": "gateway",
         "version": env!("CARGO_PKG_VERSION"),
-        "endpoints": ["/", "/health", "/ready", "/db/health", "/order/:id", "/faults/database-latency", "/faults/downstream-timeout", "/faults/controlled-error"],
+        "endpoints": ["/", "/health", "/ready", "/db/health", "/order/:id", "/faults/database-latency", "/faults/downstream-timeout", "/faults/controlled-error", "/faults/otel-collector", "/faults/database-connection"],
     }))
 }
 
 async fn db_health(
     Extension(pool): Extension<Arc<db::DbPool>>,
+    Extension(fault_state): Extension<Arc<FaultState>>,
 ) -> Result<axum::Json<serde_json::Value>, AppError> {
+    // Database connection failure: report the database as unreachable.
+    if fault_state.is_database_connection_enabled() {
+        return Err(AppError::Internal(
+            "database connection failure: database unreachable".to_string(),
+        ));
+    }
     match db::health_check(&pool).await {
         Ok(()) => Ok(axum::Json(serde_json::json!({
             "status": "healthy",
@@ -264,6 +305,38 @@ async fn disable_controlled_error(
 ) -> Json<serde_json::Value> {
     fault_state.set_controlled_error(false);
     Json(serde_json::json!({ "fault": "controlled-error", "enabled": false }))
+}
+
+/// Enable otel collector fault.
+async fn enable_otel_collector(
+    Extension(fault_state): Extension<Arc<FaultState>>,
+) -> Json<serde_json::Value> {
+    fault_state.set_otel_collector(true);
+    Json(serde_json::json!({ "fault": "otel-collector", "enabled": true }))
+}
+
+/// Disable otel collector fault.
+async fn disable_otel_collector(
+    Extension(fault_state): Extension<Arc<FaultState>>,
+) -> Json<serde_json::Value> {
+    fault_state.set_otel_collector(false);
+    Json(serde_json::json!({ "fault": "otel-collector", "enabled": false }))
+}
+
+/// Enable database connection fault.
+async fn enable_database_connection(
+    Extension(fault_state): Extension<Arc<FaultState>>,
+) -> Json<serde_json::Value> {
+    fault_state.set_database_connection(true);
+    Json(serde_json::json!({ "fault": "database-connection", "enabled": true }))
+}
+
+/// Disable database connection fault.
+async fn disable_database_connection(
+    Extension(fault_state): Extension<Arc<FaultState>>,
+) -> Json<serde_json::Value> {
+    fault_state.set_database_connection(false);
+    Json(serde_json::json!({ "fault": "database-connection", "enabled": false }))
 }
 
 pub async fn run(config: Config) -> Result<(), AppError> {

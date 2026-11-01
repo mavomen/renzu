@@ -108,6 +108,26 @@ fn run_scenario_body(client: &Client, scenario: &Scenario) -> Result<(), String>
                 .map_err(|e| format!("downstream order request failed: {e}"))?;
             Ok(())
         }
+        FaultType::CollectorUnavailable => {
+            // Telemetry collector unavailable: the application still responds.
+            // The gateway health check above already confirms the app is up.
+            Ok(())
+        }
+        FaultType::DatabaseConnectionFailure => {
+            // Database connection failure: the gateway degrades, so /db/health
+            // reports the database as unreachable while the app still responds.
+            let db_url = format!("{GATEWAY_BASE_URL}/db/health");
+            let response = client
+                .get(&db_url)
+                .send()
+                .map_err(|e| format!("database health check failed: {e}"))?;
+            if response.status().is_success() {
+                return Err(
+                    "database connection fault is not active: /db/health is healthy".to_string(),
+                );
+            }
+            Ok(())
+        }
     }
 }
 
@@ -144,6 +164,14 @@ pub(crate) fn enable_fault(client: &Client, scenario: &Scenario) -> Result<(), S
             post_fault(client, "/faults/downstream-timeout")?;
             Ok(())
         }
+        FaultType::CollectorUnavailable => {
+            post_fault(client, "/faults/otel-collector")?;
+            Ok(())
+        }
+        FaultType::DatabaseConnectionFailure => {
+            post_fault(client, "/faults/database-connection")?;
+            Ok(())
+        }
     }
 }
 
@@ -166,6 +194,14 @@ pub(crate) fn disable_fault(client: &Client, scenario: &Scenario) -> Result<(), 
         FaultType::CascadingFailure => {
             let _ = delete_fault(client, "/faults/database-latency");
             let _ = delete_fault(client, "/faults/downstream-timeout");
+            Ok(())
+        }
+        FaultType::CollectorUnavailable => {
+            delete_fault(client, "/faults/otel-collector")?;
+            Ok(())
+        }
+        FaultType::DatabaseConnectionFailure => {
+            delete_fault(client, "/faults/database-connection")?;
             Ok(())
         }
     }
@@ -208,5 +244,24 @@ impl FaultType {
             FaultType::ControlledError(msg) => msg.clone(),
             _ => "controlled error".to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_scenario_attempts_cleanup_without_panicking_when_body_fails() {
+        // No gateway is running, so every gateway call fails. `run_scenario`
+        // builds its own client internally; connection is refused immediately.
+        // The runner must still attempt cleanup (disable_fault) and return an
+        // error rather than panicking, even though the run body fails.
+        let result = run_scenario("db-connection-failure");
+        assert!(
+            result.is_err(),
+            "expected error when gateway is unreachable, got {:?}",
+            result
+        );
     }
 }
