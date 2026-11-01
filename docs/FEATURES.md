@@ -330,7 +330,7 @@ Dependencies: F-006, F-007, F-008. (F-006 and F-007 provide the instrumentation 
 
 ### F-013: Log Pipeline and Trace Correlation
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Ship application logs to the chosen backend and connect them with distributed traces.
 

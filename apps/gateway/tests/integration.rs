@@ -206,7 +206,10 @@ async fn ready_endpoint_returns_ready() {
             .expect("test database should be reachable");
         pool
     });
-    let orders_client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(1)).build().expect("client");
+    let orders_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1))
+        .build()
+        .expect("client");
     let router = gateway::server::app(pool, orders_client);
     let request = Request::builder()
         .uri("/ready")
@@ -412,7 +415,10 @@ async fn order_forward_propagates_traceparent() {
     let request = Request::builder()
         .uri("/order/456")
         .method("GET")
-        .header("traceparent", "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")
+        .header(
+            "traceparent",
+            "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        )
         .body(axum::body::Body::empty())
         .unwrap();
 
