@@ -89,8 +89,8 @@ impl<T> fmt::Debug for Redacted<T> {
     }
 }
 
-/// JSON event formatter that injects `service.name`, `service.version` and
-/// `environment` into every log event.
+/// JSON event formatter that injects `service.name`, `service.version`,
+/// `environment`, and best-effort `trace_id`/`span_id` into every log event.
 pub struct ServiceFields;
 
 impl<S, N> FormatEvent<S, N> for ServiceFields
@@ -175,9 +175,10 @@ impl Telemetry {
     /// attributes `service.name` and `service.version` are recorded on every
     /// span.
     ///
-    /// A JSON formatting layer and the OpenTelemetry layer are installed as the
-    /// global tracing subscriber using `log_level`. Export failures are logged,
-    /// never fatal.
+    /// A JSON formatting layer and the OpenTelemetry layer (wrapped with
+    /// [`WithContext`] so trace context is available to log formatters) are
+    /// installed as the global tracing subscriber using `log_level`. Export
+    /// failures are logged, never fatal.
     pub fn init(log_level: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let endpoint = std::env::var("RENZU_OTLP_ENDPOINT")
             .unwrap_or_else(|_| DEFAULT_OTLP_ENDPOINT.to_string());

@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{info};
+use tracing::info;
 
 use crate::config::Config;
 use crate::db;
@@ -96,8 +96,8 @@ async fn order_forward(
     let span = tracing::Span::current();
     span.record("order.id", &id);
 
-    let orders_url = std::env::var("RENZU_ORDERS_URL")
-        .unwrap_or_else(|_| "http://orders:8081".to_string());
+    let orders_url =
+        std::env::var("RENZU_ORDERS_URL").unwrap_or_else(|_| "http://orders:8081".to_string());
 
     let mut request = orders_client
         .get(format!("{orders_url}/order/{id}"))
@@ -115,9 +115,10 @@ async fn order_forward(
         .map_err(|e| AppError::Internal(format!("orders request failed: {e}")))?;
 
     let status = response.status().as_u16();
-    let body: serde_json::Value = response.json().await.map_err(|e| {
-        AppError::Internal(format!("orders response parse failed: {e}"))
-    })?;
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| AppError::Internal(format!("orders response parse failed: {e}")))?;
 
     span.record("orders.status", status.to_string().as_str());
 
@@ -150,8 +151,7 @@ pub async fn run(config: Config) -> Result<(), AppError> {
         .build()
         .map_err(|e| AppError::Internal(format!("orders client build failed: {e}")))?;
 
-    let app = app(pool.clone(), orders_client)
-        .layer(MetricsLayer::new(metrics));
+    let app = app(pool.clone(), orders_client).layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
 
     let result = axum::serve(listener, app).await;

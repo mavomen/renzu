@@ -1,9 +1,5 @@
-use axum::{
-    response::Json,
-    routing::get,
-    Router,
-};
 use axum::extract::Path;
+use axum::{response::Json, routing::get, Router};
 use serde::Serialize;
 use serde_json::json;
 use std::net::SocketAddr;
@@ -57,9 +53,7 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 #[instrument(name = "GET /order/:id", skip_all, fields(http.method = "GET", http.route = "/order/:id"))]
-async fn order(
-    Path(id): Path<String>,
-) -> Json<serde_json::Value> {
+async fn order(Path(id): Path<String>) -> Json<serde_json::Value> {
     let span = Span::current();
     span.record("order.id", &id);
     Json(json!({
@@ -70,9 +64,10 @@ async fn order(
 }
 
 pub async fn run(config: Config) -> Result<(), AppError> {
-    let addr: SocketAddr = config.bind_addr().parse().map_err(|e| {
-        AppError::Internal(format!("invalid bind address: {e}"))
-    })?;
+    let addr: SocketAddr = config
+        .bind_addr()
+        .parse()
+        .map_err(|e| AppError::Internal(format!("invalid bind address: {e}")))?;
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
         AppError::Internal(format!("failed to bind to {}: {e}", config.bind_addr()))
     })?;

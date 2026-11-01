@@ -8,3 +8,4 @@ F-009: Metrics Instrumentation — IN_PROGRESS (branch feat/f-009-metrics-instru
 F-010: Metrics Dashboards — IN_PROGRESS (branch feat/f-010-metrics-dashboards; stacked on F-009; Prometheus + Grafana in compose, collector metrics pipeline to Prometheus, Grafana datasource + initial dashboard).
 F-011: PostgreSQL Integration — DONE (branch merged into develop as 89a014b; PostgreSQL in compose.yaml, sqlx connection pool, DB-backed route, traced DB operations, readiness uses DB health).
 F-012: Second Rust Service — DONE (branch merged into develop; new orders crate, outbound HTTP from gateway with trace context propagation, connected trace integration test).
+F-013: Log Pipeline and Trace Correlation — IN_PROGRESS (branch feat/f-013-log-pipeline-trace-correlation; Loki in compose.yaml, collector logs pipeline, Grafana datasource, trace_id/span_id injection gap documented).

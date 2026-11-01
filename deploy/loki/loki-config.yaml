@@ -1,0 +1,51 @@
+# Loki configuration for F-013 log pipeline.
+# Receives OTLP logs from the OpenTelemetry Collector and stores them for Grafana/LogQL querying.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  instance_addr: 127.0.0.1
+  period: 0
+
+ingester:
+  lifecycler:
+    ring:
+      replication_factor: 1
+      kv_store:
+        store: inmemory
+  chunk_idle_period: 5m
+  chunk_retain_period: 30s
+  max_transfer_retries: 0
+
+schema_config:
+  configs:
+    - from: 2020-10-20
+      store: boltdb-shipper
+      object_store: filesystem
+      schema: v11
+      index:
+        period: 24h
+
+storage:
+  boltdb_shipper:
+    active_index_directory: /loki/index
+    cache_location: /loki/cache
+    cache_ttl: 24h
+    shared_store: filesystem
+  filesystem:
+    directory: /loki/chunks
+
+limits_config:
+  enforce_metric_name: false
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+chunk_store:
+  max_look_back_period: 0
+
+table_manager:
+  retention_deletes_enabled: false
+  retention_period: 0

@@ -28,8 +28,8 @@ impl Telemetry {
     pub fn init(log_level: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let endpoint = std::env::var("RENZU_OTLP_ENDPOINT")
             .unwrap_or_else(|_| DEFAULT_OTLP_ENDPOINT.to_string());
-        let environment = std::env::var("RENZU_ENVIRONMENT")
-            .unwrap_or_else(|_| DEFAULT_ENVIRONMENT.to_string());
+        let environment =
+            std::env::var("RENZU_ENVIRONMENT").unwrap_or_else(|_| DEFAULT_ENVIRONMENT.to_string());
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_http()
             .with_endpoint(&endpoint)
@@ -49,8 +49,8 @@ impl Telemetry {
             .build();
         let tracer = provider.tracer(SERVICE_NAME);
         let otel_layer = tracing_opentelemetry::OpenTelemetryLayer::new(tracer);
-        let env_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(log_level));
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
         let fmt_layer = tracing_subscriber::fmt::layer()
             .json()
             .with_filter(env_filter);
