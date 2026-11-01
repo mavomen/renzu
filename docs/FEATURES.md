@@ -266,7 +266,7 @@ Dependencies: F-004, F-007.
 
 ### F-010: Metrics Dashboards
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Make service health and performance easy to inspect.
 
