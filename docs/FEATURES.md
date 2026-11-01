@@ -422,7 +422,7 @@ Dependencies: F-008, F-010, F-011, F-012, F-014.
 
 ### F-017: Load Generation and Measurement
 
-**Status:** `PLANNED`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Generate controlled traffic and measure system behavior.
 
