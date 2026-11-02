@@ -238,7 +238,33 @@ pub fn read_report(run_id: &str) -> std::io::Result<RunReport> {
 mod tests {
     use super::*;
     use crate::loadgen::{LatencyStats, LoadTestConfig, LoadTestResult, Workload};
+    use std::sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex,
+    };
     use std::time::Duration;
+
+    static REPORT_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+    static REPORT_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    fn with_temp_reports_dir<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = REPORT_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let n = REPORT_TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("renzu-report-test-{n}"));
+        let prev = std::env::var(REPORTS_DIR_ENV).ok();
+        let _ = fs::create_dir_all(&dir);
+        std::env::set_var(REPORTS_DIR_ENV, &dir);
+        let result = f();
+        match prev {
+            Some(v) => std::env::set_var(REPORTS_DIR_ENV, v),
+            None => std::env::remove_var(REPORTS_DIR_ENV),
+        }
+        let _ = fs::remove_dir_all(&dir);
+        result
+    }
 
     fn sample_config() -> LoadTestConfig {
         LoadTestConfig {
@@ -355,29 +381,27 @@ mod tests {
 
     #[test]
     fn round_trip_uses_temp_dir() {
-        let dir = std::env::temp_dir().join(format!("renzu-report-test-{}", std::process::id()));
-        std::env::set_var(REPORTS_DIR_ENV, &dir);
-        let result = sample_result();
-        let report = build_report(
-            "rt-1",
-            &result,
-            CompletionStatus::Complete,
-            "2026-01-01T00:00:00Z".to_string(),
-        );
-        write_report(&report).expect("write report");
-        let read_back = read_report("rt-1").expect("read report");
-        assert_eq!(read_back.run_id, report.run_id);
-        assert_eq!(read_back.scenario, report.scenario);
-        assert_eq!(read_back.completion_status, report.completion_status);
-        let _ = fs::remove_dir_all(&dir);
+        with_temp_reports_dir(|| {
+            let result = sample_result();
+            let report = build_report(
+                "rt-1",
+                &result,
+                CompletionStatus::Complete,
+                "2026-01-01T00:00:00Z".to_string(),
+            );
+            write_report(&report).expect("write report");
+            let read_back = read_report("rt-1").expect("read report");
+            assert_eq!(read_back.run_id, report.run_id);
+            assert_eq!(read_back.scenario, report.scenario);
+            assert_eq!(read_back.completion_status, report.completion_status);
+        });
     }
 
     #[test]
     fn read_unknown_run_id_errors() {
-        let dir = std::env::temp_dir().join(format!("renzu-report-test-{}", std::process::id()));
-        std::env::set_var(REPORTS_DIR_ENV, &dir);
-        let err = read_report("does-not-exist").unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
-        let _ = fs::remove_dir_all(&dir);
+        with_temp_reports_dir(|| {
+            let err = read_report("does-not-exist").unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        });
     }
 }

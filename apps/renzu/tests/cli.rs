@@ -232,9 +232,10 @@ fn compare_flags_incompatible_runs() {
 fn docker_compose_available() -> bool {
     std::process::Command::new("docker")
         .arg("compose")
-        .arg("version")
+        .arg("config")
         .output()
-        .is_ok()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 fn renzu() -> std::process::Command {

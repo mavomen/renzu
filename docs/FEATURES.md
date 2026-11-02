@@ -330,7 +330,7 @@ Dependencies: F-006, F-007, F-008. (F-006 and F-007 provide the instrumentation 
 
 ### F-013: Log Pipeline and Trace Correlation
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Ship application logs to the chosen backend and connect them with distributed traces.
 
@@ -348,6 +348,10 @@ Acceptance criteria:
 - A developer can use those identifiers to locate the corresponding trace.
 - Correlation behavior is tested or demonstrated.
 - No unsupported cross-backend correlation is claimed.
+
+Known limitation: Loki is not provisioned in `compose.yaml` and the Collector has no `logs` pipeline or `loki` exporter, so logs do not currently reach a backend and trace correlation cannot be verified.
+
+Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
