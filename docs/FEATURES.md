@@ -158,7 +158,7 @@ Dependencies: F-002.
 
 ### F-005: Structured Application Logging
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Produce useful, structured diagnostic logs.
 
@@ -245,7 +245,7 @@ Dependencies: F-007.
 
 ### F-009: Metrics Instrumentation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Expose application health and performance metrics.
 
