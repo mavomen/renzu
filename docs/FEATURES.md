@@ -137,7 +137,7 @@ Dependencies: F-002.
 
 ### F-004: Rust HTTP Service
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Establish the first independently runnable application service.
 
@@ -180,7 +180,7 @@ Dependencies: F-001 (log field conventions), F-004.
 
 ### F-006: Distributed Trace Instrumentation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Trace operations within an application service.
 
@@ -202,7 +202,7 @@ Dependencies: F-003, F-004.
 
 ### F-007: OpenTelemetry Collector Pipeline
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Centralize telemetry collection and export.
 
@@ -266,7 +266,7 @@ Dependencies: F-004, F-007.
 
 ### F-010: Metrics Dashboards
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Make service health and performance easy to inspect.
 
@@ -478,7 +478,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -496,7 +496,7 @@ Dependencies: F-018.
 ### F-020: Performance Comparison Reports
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Compare any two experiment runs (generalizing the baseline-vs-faulted view from F-018).
@@ -550,7 +550,7 @@ Dependencies: F-021.
 ### F-023: Expanded Failure Scenarios
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Extend cascading-failure demonstrations beyond the initial scenario in F-016.
