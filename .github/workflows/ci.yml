@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+env:
+  RUST_TOOLCHAIN: 1.97.0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Start local infrastructure (docker compose)
+        run: docker compose up -d
+
+      - name: Wait for services to be healthy
+        run: |
+          for i in $(seq 1 30); do
+            if docker compose ps | grep -q "healthy" && ! docker compose ps | grep -Eq "unhealthy|starting"; then
+              echo "services healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "services did not become healthy:" >&2
+          docker compose ps >&2
+          exit 1
+
+      - name: Run trace visualization E2E
+        run: ./scripts/e2e-trace-visualization.sh
+
+      - name: Stop local infrastructure
+        run: docker compose down
+        if: always()

@@ -1,0 +1,16 @@
+# Prometheus configuration for F-010 metrics dashboards.
+# Scrapes the OpenTelemetry Collectors Prometheus-format metrics endpoint
+# (exposed on port 9464) to collect gateway metrics exported via OTLP.
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  - job_name: "otel-collector"
+    # The collector runs on the Docker network; use the service name so
+    # Prometheus can reach it from inside Compose.
+    static_configs:
+      - targets: ["otel-collector:9464"]
+    # Honor the Collectors own timestamps where available.
+    honor_timestamps: true

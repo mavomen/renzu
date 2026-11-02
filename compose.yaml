@@ -1,0 +1,145 @@
+# Docker Compose for the local observability environment.
+# Scope: OpenTelemetry Collector + Jaeger + Prometheus + Grafana (M1 slice).
+# No application services yet; the first Rust crate lands in F-004.
+#
+# All published ports are bound to 127.0.0.1 only (PRD NFR-04).
+# Image tags are pinned explicitly (no :latest) (PRD NFR-01).
+#
+# Validate without Docker:  docker compose config
+# Start:                    docker compose up -d
+# Stop:                     docker compose down
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.58.0
+    container_name: renzu-jaeger
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:16686:16686"   # Jaeger query UI
+    # OTLP ports (4317 gRPC, 4318 HTTP) and the Jaeger collector port (14250)
+    # are consumed by the otel-collector over the Docker network; they are not
+    # published to the host to keep the host surface minimal.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  otel-collector:
+    image: otel/opentelemetry-collector:0.113.0
+    container_name: renzu-otel-collector
+    restart: unless-stopped
+    depends_on:
+      jaeger:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4317:4317"   # OTLP gRPC receiver
+      - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
+      - "127.0.0.1:9464:9464"   # Prometheus-format metrics endpoint (scraped by Prometheus)
+    volumes:
+      - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    command: ["--config=/etc/otelcol/config.yaml"]
+    healthcheck:
+      # The otel/opentelemetry-collector image is distroless: it ships no shell
+      # and no probe tools (nc/curl/wget/true/busybox), so an in-container TCP
+      # connect to port 4317 is not possible. Instead, the healthcheck validates
+      # the collector config; a valid config is what binds the OTLP ports, and
+      # an invalid config prevents the container from serving telemetry at all.
+      # The result is visible via `docker compose ps` (healthy/unhealthy).
+      test: ["CMD", "/otelcol", "validate", "--config=/etc/otelcol/config.yaml"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    # Startup ordering is still enforced: the Collector waits for Jaeger to
+    # report healthy via depends_on condition: service_healthy.
+
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    container_name: renzu-prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"   # Prometheus query UI + API
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.listen-address=0.0.0.0:9090"
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: renzu-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"   # Grafana UI
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:16.4
+    container_name: renzu-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"   # PostgreSQL
+    environment:
+      - POSTGRES_USER=${RENZU_DB_USER:-renzu}
+      - POSTGRES_PASSWORD=${RENZU_DB_PASSWORD:-renzu}
+      - POSTGRES_DB=${RENZU_DB_NAME:-renzu}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RENZU_DB_USER:-renzu} -d ${RENZU_DB_NAME:-renzu}"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+
+  orders:
+    build:
+      context: .
+      dockerfile: apps/orders/Dockerfile
+    container_name: renzu-orders
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      - RENZU_HOST=0.0.0.0
+      - RENZU_PORT=8081
+      - RENZU_LOG_LEVEL=info
+    depends_on:
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  postgres_data:

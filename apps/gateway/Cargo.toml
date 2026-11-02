@@ -1,0 +1,34 @@
+[package]
+name = "gateway"
+version = "0.0.0"
+edition = "2021"
+
+[features]
+profiling = ["console-subscriber"]
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+tower-http = { workspace = true }
+tower = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime"] }
+opentelemetry-otlp = { workspace = true, default-features = false, features = ["http-proto", "metrics", "reqwest-client", "trace"] }
+tracing-opentelemetry = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }
+console-subscriber = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+http-body-util = "0.1"
+hyper = "1"
+hyper-util = "0.1"
+opentelemetry-proto = "0.33.1"
+prost = "0.14"
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
