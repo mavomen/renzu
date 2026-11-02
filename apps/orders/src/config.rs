@@ -52,42 +52,63 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static CONFIG_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    /// Run `f` with exclusive access to the process-global `RENZU_*` env vars.
+    ///
+    /// Serializes these tests because `Config::from_env()` reads process-global
+    /// environment, so concurrent tests would otherwise stomp on each other.
+    fn with_config_env<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = CONFIG_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        f()
+    }
 
     #[test]
     fn from_env_uses_defaults_when_vars_absent() {
-        std::env::remove_var("RENZU_HOST");
-        std::env::remove_var("RENZU_PORT");
-        std::env::remove_var("RENZU_LOG_LEVEL");
+        with_config_env(|| {
+            std::env::remove_var("RENZU_HOST");
+            std::env::remove_var("RENZU_PORT");
+            std::env::remove_var("RENZU_LOG_LEVEL");
 
-        let config = Config::from_env().expect("defaults should load");
-        assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 8081);
-        assert_eq!(config.log_level, "info");
-        assert_eq!(config.bind_addr(), "127.0.0.1:8081");
+            let config = Config::from_env().expect("defaults should load");
+            assert_eq!(config.host, "127.0.0.1");
+            assert_eq!(config.port, 8081);
+            assert_eq!(config.log_level, "info");
+            assert_eq!(config.bind_addr(), "127.0.0.1:8081");
+        });
     }
 
     #[test]
     fn from_env_reads_overrides() {
-        std::env::set_var("RENZU_HOST", "0.0.0.0");
-        std::env::set_var("RENZU_PORT", "9091");
-        std::env::set_var("RENZU_LOG_LEVEL", "debug");
+        with_config_env(|| {
+            std::env::set_var("RENZU_HOST", "0.0.0.0");
+            std::env::set_var("RENZU_PORT", "9091");
+            std::env::set_var("RENZU_LOG_LEVEL", "debug");
 
-        let config = Config::from_env().expect("overrides should load");
-        assert_eq!(config.host, "0.0.0.0");
-        assert_eq!(config.port, 9091);
-        assert_eq!(config.log_level, "debug");
+            let config = Config::from_env().expect("overrides should load");
+            assert_eq!(config.host, "0.0.0.0");
+            assert_eq!(config.port, 9091);
+            assert_eq!(config.log_level, "debug");
 
-        std::env::remove_var("RENZU_HOST");
-        std::env::remove_var("RENZU_PORT");
-        std::env::remove_var("RENZU_LOG_LEVEL");
+            std::env::remove_var("RENZU_HOST");
+            std::env::remove_var("RENZU_PORT");
+            std::env::remove_var("RENZU_LOG_LEVEL");
+        });
     }
 
     #[test]
     fn from_env_rejects_invalid_port() {
-        std::env::set_var("RENZU_PORT", "not-a-port");
-        let result = Config::from_env();
-        assert!(result.is_err(), "invalid port should error");
-        std::env::remove_var("RENZU_PORT");
+        with_config_env(|| {
+            std::env::set_var("RENZU_PORT", "not-a-port");
+            let result = Config::from_env();
+            assert!(result.is_err(), "invalid port should error");
+            std::env::remove_var("RENZU_PORT");
+        });
     }
 }
 
