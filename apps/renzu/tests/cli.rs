@@ -1,4 +1,5 @@
 use renzu::run;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -255,12 +256,98 @@ fn compare_flags_incompatible_runs() {
 }
 
 fn docker_compose_available() -> bool {
-    std::process::Command::new("docker")
+    let docker_version = std::process::Command::new("docker")
+        .arg("version")
+        .arg("--format")
+        .arg("{{.Server.Version}}")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !docker_version {
+        return false;
+    }
+
+    let compose_config = std::process::Command::new("docker")
         .arg("compose")
         .arg("config")
         .output()
         .map(|output| output.status.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    if !compose_config {
+        return false;
+    }
+
+    let output = match std::process::Command::new("docker")
+        .arg("compose")
+        .arg("config")
+        .arg("--format")
+        .arg("json")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let config: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let services = match config.get("services").and_then(|s| s.as_object()) {
+        Some(s) => s,
+        None => return false,
+    };
+
+    let images_output = match std::process::Command::new("docker")
+        .arg("images")
+        .arg("--format")
+        .arg("{{.Repository}}:{{.Tag}}")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+
+    let available_images: HashSet<String> = String::from_utf8_lossy(&images_output.stdout)
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+
+    for (_, service) in services {
+        if let Some(build) = service.get("build") {
+            let image_name = if let Some(ctx) = build.get("context").and_then(|c| c.as_str()) {
+                let dockerfile = build
+                    .get("dockerfile")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("Dockerfile");
+                let path = std::path::Path::new(ctx).join(dockerfile);
+                if path.exists() {
+                    let name = std::path::Path::new(ctx)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown");
+                    format!("renzu-{name}:latest")
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+            if !available_images.contains(&image_name) {
+                return false;
+            }
+        } else if let Some(image) = service.get("image").and_then(|i| i.as_str()) {
+            if !available_images.contains(image) {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 fn renzu() -> std::process::Command {
