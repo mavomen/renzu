@@ -349,7 +349,7 @@ Acceptance criteria:
 - Correlation behavior is tested or demonstrated.
 - No unsupported cross-backend correlation is claimed.
 
-Known limitation: Loki is not provisioned in `compose.yaml` and the Collector has no `logs` pipeline or `loki` exporter, so logs do not currently reach a backend and trace correlation cannot be verified.
+Known limitation: F-013b (trace/span ID correlation in logs) remains outstanding. Loki is provisioned and the Collector logs pipeline is configured, but applications do not yet export OTLP logs and trace IDs are not yet injected into log fields.
 
 Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria.
 
