@@ -1,7 +1,8 @@
-# OpenTelemetry Collector configuration for F-003 (local infrastructure), extended by F-007 and F-010.
+# OpenTelemetry Collector configuration for F-003 (local infrastructure), extended by F-007, F-010, and F-013.
 # Pipelines:
 #   traces:   otlp -> batch -> otlphttp -> jaeger:4318
 #   metrics:  otlp -> batch -> prometheus (endpoint 0.0.0.0:9464, scraped by Prometheus)
+#   logs:     otlp -> batch -> loki (endpoint http://loki:3100/loki/api/v1/push)
 # The Collector binds OTLP on 0.0.0.0 so the application can reach it; published
 # ports are mapped to 127.0.0.1 in compose.yaml.
 #
@@ -31,6 +32,8 @@ exporters:
     endpoint: http://jaeger:4318
   prometheus:
     endpoint: 0.0.0.0:9464
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
 
 processors:
   batch:
@@ -46,3 +49,7 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [loki]

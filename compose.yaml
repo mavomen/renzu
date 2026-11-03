@@ -1,5 +1,5 @@
 # Docker Compose for the local observability environment.
-# Services: OpenTelemetry Collector + Jaeger + Prometheus + Grafana, plus the
+# Services: OpenTelemetry Collector (contrib) + Jaeger + Prometheus + Grafana + Loki, plus the
 # gateway and orders application crates.
 #
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
@@ -27,11 +27,13 @@ services:
       start_period: 15s
 
   otel-collector:
-    image: otel/opentelemetry-collector:0.113.0
+    image: otel/opentelemetry-collector-contrib:0.113.0
     container_name: renzu-otel-collector
     restart: unless-stopped
     depends_on:
       jaeger:
+        condition: service_healthy
+      loki:
         condition: service_healthy
     ports:
       - "127.0.0.1:4317:4317"   # OTLP gRPC receiver
@@ -41,7 +43,7 @@ services:
       - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     command: ["--config=/etc/otelcol/config.yaml"]
     healthcheck:
-      # The otel/opentelemetry-collector image is distroless: it ships no shell
+      # The otel/opentelemetry-collector-contrib image is distroless: it ships no shell
       # and no probe tools (nc/curl/wget/true/busybox), so an in-container TCP
       # connect to port 4317 is not possible. Instead, the healthcheck validates
       # the collector config; a valid config is what binds the OTLP ports, and
@@ -76,6 +78,23 @@ services:
       retries: 3
       start_period: 15s
 
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: renzu-loki
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"   # Loki HTTP API
+    volumes:
+      - loki_data:/loki
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
   grafana:
     image: grafana/grafana:11.2.0
     container_name: renzu-grafana
@@ -91,6 +110,8 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     depends_on:
       prometheus:
+        condition: service_healthy
+      loki:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null || exit 1"]
@@ -170,3 +191,4 @@ services:
 
 volumes:
   postgres_data:
+  loki_data:
