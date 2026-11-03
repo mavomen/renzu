@@ -1,6 +1,6 @@
 # Docker Compose for the local observability environment.
-# Scope: OpenTelemetry Collector + Jaeger + Prometheus + Grafana (M1 slice).
-# No application services yet; the first Rust crate lands in F-004.
+# Services: OpenTelemetry Collector + Jaeger + Prometheus + Grafana, plus the
+# gateway and orders application crates.
 #
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
 # Image tags are pinned explicitly (no :latest) (PRD NFR-01).
@@ -131,11 +131,38 @@ services:
       - RENZU_HOST=0.0.0.0
       - RENZU_PORT=8081
       - RENZU_LOG_LEVEL=info
+      - RENZU_OTLP_ENDPOINT=http://otel-collector:4317/v1/traces
     depends_on:
       otel-collector:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: apps/gateway/Dockerfile
+    container_name: renzu-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # Gateway HTTP
+    environment:
+      - RENZU_HOST=0.0.0.0
+      - RENZU_PORT=8080
+      - RENZU_LOG_LEVEL=info
+      - RENZU_DATABASE_URL=postgres://renzu:renzu@postgres:5432/renzu
+      - RENZU_ORDERS_URL=http://orders:8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
