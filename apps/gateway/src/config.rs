@@ -64,9 +64,13 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn from_env_uses_defaults_when_vars_absent() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::remove_var("RENZU_HOST");
         std::env::remove_var("RENZU_PORT");
         std::env::remove_var("RENZU_LOG_LEVEL");
@@ -87,6 +91,7 @@ mod tests {
 
     #[test]
     fn from_env_reads_overrides() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("RENZU_HOST", "0.0.0.0");
         std::env::set_var("RENZU_PORT", "9090");
         std::env::set_var("RENZU_LOG_LEVEL", "debug");
@@ -115,6 +120,7 @@ mod tests {
 
     #[test]
     fn from_env_rejects_invalid_port() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         std::env::set_var("RENZU_PORT", "not-a-port");
         let result = Config::from_env();
         assert!(result.is_err(), "invalid port should error");
