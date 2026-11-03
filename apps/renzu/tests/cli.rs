@@ -24,18 +24,30 @@ fn invalid_arg_exits_non_zero() {
 }
 
 #[test]
-fn stub_subcommands_exit_zero() {
-    for args in [
-        vec!["renzu", "scenario", "list"],
-        vec!["renzu", "scenario", "run", "name"],
-        vec!["renzu", "load-test", "--scenario", "name"],
-    ] {
-        assert_eq!(run(args), ExitCode::from(0));
-    }
+fn scenario_subcommands_exit_codes_match_behavior() {
+    // `scenario list` succeeds and prints known scenario names to stdout.
+    let list = run(["renzu", "scenario", "list"]);
+    assert_eq!(list, ExitCode::from(0));
+
+    // `scenario run` with an unknown scenario fails with exit 1.
+    let run_unknown = run(["renzu", "scenario", "run", "no-such-scenario"]);
+    assert_eq!(run_unknown, ExitCode::from(1));
+
+    // `load-test` requires --rate or --concurrency before scenario validation;
+    // an unknown scenario with a valid workload fails with exit 2 (Usage).
+    let load_unknown = run([
+        "renzu",
+        "load-test",
+        "--scenario",
+        "no-such-scenario",
+        "--rate",
+        "1",
+    ]);
+    assert_eq!(load_unknown, ExitCode::from(2));
 }
 
 #[test]
-fn stub_subcommand_prints_not_implemented_to_stderr() {
+fn scenario_list_prints_names_to_stdout_with_empty_stderr() {
     let bin = std::env::var("CARGO_BIN_EXE_renzu")
         .expect("CARGO_BIN_EXE_renzu is set by cargo for integration tests");
     let output = std::process::Command::new(&bin)
@@ -45,7 +57,20 @@ fn stub_subcommand_prints_not_implemented_to_stderr() {
         .expect("failed to execute renzu binary");
     assert_eq!(output.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("renzu scenario list: not yet implemented"));
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("baseline"),
+        "stdout missing scenario: {stdout}"
+    );
+    assert!(
+        stdout.contains("otel-collector-down"),
+        "stdout missing scenario: {stdout}"
+    );
+    assert!(
+        stdout.contains("db-connection-failure"),
+        "stdout missing scenario: {stdout}"
+    );
 }
 
 #[test]
