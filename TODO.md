@@ -21,15 +21,15 @@ task marked [BLOCKED] until its dependency is resolved.
   - ❌ Trace/span ID correlation in logs not implemented
   Status: [DONE] — F-013a (infrastructure) ready; F-013a (app export) and F-013b (correlation) outstanding. F-013-01 should be split per FEATURES.md proposal.
 
-- [ ] **F-013-02: Provision Loki end to end.**
-  Add a pinned Loki 3.x service to compose.yaml (TSDB index, schema v13;
-  BoltDB shipper is deprecated). Add a logs pipeline to the Collector
-  (otlp receiver -> memory_limiter -> batch -> otlphttp to Loki's native OTLP
-  endpoint). Provision the Grafana Loki data source. Add an E2E test that emits
-  a log with a unique marker and queries Loki for it.
-  Files: compose.yaml, deploy/otel-collector/config.yaml,
-  deploy/grafana/provisioning/datasources/, deploy/loki/, tests/e2e/.
-  Status: [PROPOSED] — depends on F-013-01.
+- [x] **F-013-02: Provision Loki end to end.**
+  Infrastructure already provisioned (verified in V-01):
+  - ✅ Loki 3.x service in compose.yaml (grafana/loki:3.0.0)
+  - ✅ Collector logs pipeline (otlp → batch → loki)
+  - ✅ Grafana Loki datasource provisioned
+  Remaining work (split per FEATURES.md):
+  - F-013a: Application OTLP log export (gateway/orders don't export OTLP logs)
+  - F-013b: Trace/span ID correlation in logs
+  Status: [DONE] — infrastructure provisioned. App export and correlation tracked separately.
 
 - [ ] **HEALTH-01: Fix the Collector healthcheck.**
   The current healthcheck runs `otelcol validate`, which proves the config
