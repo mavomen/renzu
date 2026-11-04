@@ -356,19 +356,21 @@ task marked [BLOCKED] until its dependency is resolved.
   Files: compose.yaml, deploy/otel-collector/config.yaml.
   Status: [PROPOSED] — quick diagnostic, unblocks F-013-01.
 
-- [ ] **V-02: Verify gateway service wiring.**
-  The gateway service is not in compose.yaml, and orders has no DATABASE_URL
-  or OTLP endpoint environment variables. Either the file on main lags the
-  description or the services rely on defaults. Confirm with
-  `docker compose config`.
-  Files: compose.yaml, apps/*/Cargo.toml.
-  Status: [PROPOSED] — quick diagnostic.
+- [x] **V-02: Verify gateway service wiring.**
+  Gateway service IS in compose.yaml with all required environment variables:
+  - RENZU_HOST, RENZU_PORT, RENZU_LOG_LEVEL
+  - RENZU_DATABASE_URL (postgres://renzu:renzu@postgres:5432/renzu)
+  - RENZU_ORDERS_URL (http://orders:8081)
+  - Depends on postgres and otel-collector health
+  Status: [DONE] — service correctly wired in current compose.yaml.
 
-- [ ] **V-03: Verify orders service env wiring.**
-  orders has no DATABASE_URL or OTLP endpoint environment variables in
-  compose.yaml. Confirm whether it relies on defaults or is misconfigured.
-  Files: compose.yaml, apps/orders/src/config.rs.
-  Status: [PROPOSED] — quick diagnostic.
+- [x] **V-03: Verify orders service env wiring.**
+  Orders service HAS required environment variables in compose.yaml:
+  - RENZU_HOST, RENZU_PORT, RENZU_LOG_LEVEL
+  - RENZU_OTLP_ENDPOINT (http://otel-collector:4317/v1/traces)
+  - Depends on otel-collector health
+  Config reads host/port/log_level from env; telemetry reads OTLP endpoint directly.
+  Status: [DONE] — service correctly wired in current compose.yaml.
 
 - [ ] **V-04: Audit every DONE feature for real verification.**
   Each DONE feature in docs/FEATURES.md must have a named, automated
