@@ -66,6 +66,10 @@ echo "==> checking compose dependencies are reachable"
 wait_for_port "${JAEGER_HOST}" "${JAEGER_PORT}" "Jaeger API" "${COMPOSE_WAIT}"
 wait_for_port "127.0.0.1" 4318 "OTel Collector OTLP HTTP receiver" "${COMPOSE_WAIT}"
 
+echo "==> stopping gateway container to free port 8080"
+docker compose stop gateway 2>/dev/null || true
+docker compose rm -f gateway 2>/dev/null || true
+
 echo "==> building gateway binary"
 cargo build --bin gateway
 

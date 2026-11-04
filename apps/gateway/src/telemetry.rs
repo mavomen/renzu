@@ -30,6 +30,7 @@ use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::logs::log_processor_with_async_runtime::BatchLogProcessor;
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
@@ -227,8 +228,10 @@ impl Telemetry {
             .build()
             .map_err(|e| format!("failed to build OTLP log exporter: {e}"))?;
 
+        let log_processor = BatchLogProcessor::builder(log_exporter, Tokio).build();
+
         let logger_provider = SdkLoggerProvider::builder()
-            .with_batch_exporter(log_exporter)
+            .with_log_processor(log_processor)
             .with_resource(
                 Resource::builder()
                     .with_attributes(vec![

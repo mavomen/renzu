@@ -42,6 +42,8 @@ services:
     volumes:
       - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      - OTELCOL_LOG_LEVEL=debug
     healthcheck:
       # The otel/opentelemetry-collector-contrib image is distroless: it ships no shell
       # and no probe tools (nc/curl/wget/true/busybox), so an in-container TCP
@@ -49,11 +51,11 @@ services:
       # the collector config; a valid config is what binds the OTLP ports, and
       # an invalid config prevents the container from serving telemetry at all.
       # The result is visible via `docker compose ps` (healthy/unhealthy).
-      test: ["CMD", "/otelcol", "validate", "--config=/etc/otelcol/config.yaml"]
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol/config.yaml"]
       interval: 10s
       timeout: 3s
       retries: 3
-      start_period: 15s
+      start_period: 30s
     # Startup ordering is still enforced: the Collector waits for Jaeger to
     # report healthy via depends_on condition: service_healthy.
 

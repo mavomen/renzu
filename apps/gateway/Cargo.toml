@@ -17,7 +17,7 @@ thiserror = { workspace = true }
 tower-http = { workspace = true }
 tower = { workspace = true }
 opentelemetry = { workspace = true, features = ["logs"] }
-opentelemetry_sdk = { workspace = true, features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime", "logs"] }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio", "experimental_trace_batch_span_processor_with_async_runtime", "logs", "experimental_logs_batch_log_processor_with_async_runtime"] }
 opentelemetry-otlp = { workspace = true, default-features = false, features = ["http-proto", "metrics", "reqwest-client", "trace", "logs"] }
 opentelemetry-appender-tracing = "0.33.1"
 tracing-opentelemetry = { workspace = true }
