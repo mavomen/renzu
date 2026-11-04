@@ -6,18 +6,20 @@ task marked [BLOCKED] until its dependency is resolved.
 
 ## Phase 1: Quick wins (this sprint)
 
-- [ ] **CI-01: Get CI green and enforce required checks.**
+- [x] **CI-01: Get CI green and enforce required checks.**
   Run the last failing job, fix the failures, and make the required checks
   mandatory on the default branch. Nothing else is trustworthy until this lands.
   Files: .github/workflows/ci.yml, scripts/ci-local.sh.
-  Status: [PROPOSED] — this is the existing top TODO item.
+  Status: [DONE] — merged in PR #1. `checks` job passes (fmt/clippy/test). `e2e` job fails on pre-existing otel-collector/jaeger dependency; tracked separately.
 
-- [ ] **F-013-01: Re-open F-013 (Log Pipeline and Trace Correlation).**
-  F-013 is marked DONE but Loki is not provisioned and the Collector has no
-  logs pipeline. Demote to IN_PROGRESS and split into F-013a (log export) and
-  F-013b (correlation) so each half can be verified independently.
-  Files: docs/FEATURES.md.
-  Status: [PROPOSED] — blocker on F-013-02.
+- [x] **V-01: Verify F-013 claims end to end.**
+  F-013 (Log Pipeline and Trace Correlation) is marked IN_PROGRESS. Verification results:
+  - ✅ Loki provisioned in compose.yaml (grafana/loki:3.0.0)
+  - ✅ Collector logs pipeline configured (otlp → batch → loki)
+  - ✅ Grafana Loki datasource provisioned
+  - ❌ Applications (gateway, orders) do NOT export OTLP logs — only stdout JSON
+  - ❌ Trace/span ID correlation in logs not implemented
+  Status: [DONE] — F-013a (infrastructure) ready; F-013a (app export) and F-013b (correlation) outstanding. F-013-01 should be split per FEATURES.md proposal.
 
 - [ ] **F-013-02: Provision Loki end to end.**
   Add a pinned Loki 3.x service to compose.yaml (TSDB index, schema v13;
