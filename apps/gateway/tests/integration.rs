@@ -49,6 +49,7 @@ async fn health_span_exported_to_otlp_receiver() {
         .expect("test receiver should bind");
     let addr: SocketAddr = listener.local_addr().expect("local addr");
     let endpoint = format!("http://{addr}/v1/traces");
+    let logs_endpoint = format!("http://{addr}/v1/logs");
 
     let spans: Arc<Mutex<Vec<OtlpSpan>>> = Arc::new(Mutex::new(Vec::new()));
     let spans_svc = spans.clone();
@@ -116,6 +117,7 @@ async fn health_span_exported_to_otlp_receiver() {
     tokio::time::sleep(Duration::from_millis(25)).await;
 
     std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
+    std::env::set_var("RENZU_OTLP_LOGS_ENDPOINT", &logs_endpoint);
     let telemetry = Telemetry::init("info").expect("telemetry should initialize");
 
     let router = test_app();
@@ -155,6 +157,7 @@ async fn health_span_exported_to_otlp_receiver() {
 
     drop(receiver);
     std::env::remove_var("RENZU_OTLP_ENDPOINT");
+    std::env::remove_var("RENZU_OTLP_LOGS_ENDPOINT");
     telemetry.shutdown();
 }
 
@@ -165,6 +168,7 @@ async fn error_span_exported_to_otlp_receiver() {
         .expect("test receiver should bind");
     let addr: SocketAddr = listener.local_addr().expect("local addr");
     let endpoint = format!("http://{addr}/v1/traces");
+    let logs_endpoint = format!("http://{addr}/v1/logs");
 
     let spans: Arc<Mutex<Vec<OtlpSpan>>> = Arc::new(Mutex::new(Vec::new()));
     let spans_svc = spans.clone();
@@ -232,6 +236,7 @@ async fn error_span_exported_to_otlp_receiver() {
     tokio::time::sleep(Duration::from_millis(25)).await;
 
     std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
+    std::env::set_var("RENZU_OTLP_LOGS_ENDPOINT", &logs_endpoint);
     let telemetry = Telemetry::init("info").expect("telemetry should initialize");
 
     let router = test_app();
@@ -290,6 +295,7 @@ async fn error_span_exported_to_otlp_receiver() {
 
     drop(receiver);
     std::env::remove_var("RENZU_OTLP_ENDPOINT");
+    std::env::remove_var("RENZU_OTLP_LOGS_ENDPOINT");
     telemetry.shutdown();
 }
 

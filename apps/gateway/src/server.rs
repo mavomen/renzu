@@ -249,6 +249,14 @@ async fn order_forward(
 
     span.record("orders.status", status.to_string().as_str());
 
+    // Emit a correlated log event inside the trace span so it carries
+    // trace_id/span_id when exported as an OTLP LogRecord.
+    tracing::info!(
+        order.id = %id,
+        orders.status = %status,
+        "order forwarded to orders service"
+    );
+
     Ok(axum::Json(serde_json::json!({
         "order_id": id,
         "gateway_status": "forwarded",
