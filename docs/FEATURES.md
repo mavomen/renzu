@@ -114,7 +114,7 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Provide a repeatable local environment.
 
@@ -132,6 +132,8 @@ Acceptance criteria:
 - Health status distinguishes ready services from unhealthy services.
 - Startup failures produce actionable diagnostics.
 - Shutdown behavior is documented and tested.
+
+Known limitation: No automated test verifies the infrastructure orchestration. The e2e CI job runs `docker compose up` but fails on otel-collector/jaeger dependency. Health check behavior, startup dependencies, and shutdown behavior lack automated verification.
 
 Dependencies: F-002.
 
@@ -224,7 +226,7 @@ Dependencies: F-003, F-006.
 
 ### F-008: Distributed Trace Visualization
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Inspect trace spans and operation timing.
 
@@ -239,6 +241,8 @@ Acceptance criteria:
 - Span relationships and durations are visible.
 - Failed operations can be identified.
 - UI access instructions are documented.
+
+Known limitation: No automated test verifies trace visualization. The e2e trace visualization script (`scripts/e2e-trace-visualization.sh`) fails in CI due to otel-collector/jaeger dependency issue. Trace UI access and span inspection lack automated verification.
 
 Dependencies: F-007.
 
@@ -482,7 +486,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -494,6 +498,8 @@ Acceptance criteria:
 - Profiling instructions work on the documented environment.
 - Profiling results can be inspected.
 - Tooling overhead and limitations are documented.
+
+Known limitation: No automated test verifies the profiling workflow. This feature is documentation-only; no test verifies profiling instructions work, results can be inspected, or tooling overhead is measured.
 
 Dependencies: F-018.
 
