@@ -10,26 +10,23 @@
 //! performs blocking I/O and must not be invoked from within an asynchronous
 //! context.
 //!
-//! Logs are emitted as newline-delimited JSON to stdout. Every log event carries
-//! `service.name`, `service.version` and `environment` (from `RENZU_ENVIRONMENT`,
-//! default `local`) so they can be queried and correlated without a log backend.
-//! `RENZU_LOG_LEVEL` controls verbosity via [`EnvFilter`].
+//! Logs are emitted as OTLP LogRecords via `opentelemetry-appender-tracing`.
+//! The `OpenTelemetryTracingBridge` layer converts `tracing` events into OTLP
+//! log records, automatically attaching `trace_id`, `span_id`, and `trace_flags`
+//! from the current span context. Logs are exported through a
+//! [`SimpleLogProcessor`] to the same OTLP endpoint (logs path).
 //!
 //! Sensitive values can be redacted at the call site with [`Redacted`]:
 //! `tracing::info!(auth = %Redacted(&token), "authenticating")` renders
 //! `[REDACTED]`. Redaction is opt-in; values logged without `Redacted` are
 //! emitted as-is.
-//!
-//! Best-effort `trace_id`/`span_id` correlation is noted as a gap: tracing
-//! event fields are immutable at creation time, and the OpenTelemetry trace
-//! context is not exposed as tracing span fields at M1, so it cannot be
-//! injected into log events here. It is recorded on spans (F-006) and the
-//! fields can be added to log output once spans declare them.
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
 use opentelemetry_sdk::trace::SdkTracerProvider;
@@ -94,23 +91,64 @@ impl SpanExporter for CountingSpanExporter {
     }
 }
 
+/// Wraps an OTLP log exporter, counting export failures so readiness can
+/// reflect exporter health.
+#[derive(Debug)]
+struct CountingLogExporter {
+    inner: opentelemetry_otlp::LogExporter,
+    failures: Arc<AtomicU64>,
+}
+
+impl CountingLogExporter {
+    fn new(exporter: opentelemetry_otlp::LogExporter) -> Self {
+        Self {
+            inner: exporter,
+            failures: Arc::new(AtomicU64::new(0)),
+        }
+    }
+}
+
+impl opentelemetry_sdk::logs::LogExporter for CountingLogExporter {
+    fn export(
+        &self,
+        batch: opentelemetry_sdk::logs::LogBatch<'_>,
+    ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
+        let failures = self.failures.clone();
+        async move {
+            match self.inner.export(batch).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    failures.fetch_add(1, Ordering::Relaxed);
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
+}
+
 /// Runtime environment, read from `RENZU_ENVIRONMENT` (default `local`).
 ///
 /// Set once during [`Telemetry::init`] and read by the JSON event formatter for
 /// every log event.
 static ENVIRONMENT: OnceLock<String> = OnceLock::new();
 
-/// Handle to an initialized OpenTelemetry tracer provider.
+/// Handle to an initialized OpenTelemetry tracer and logger provider.
 ///
-/// Shutting down the handle flushes in-flight spans to the OTLP endpoint
-/// before the process exits.
+/// Shutting down the handle flushes in-flight spans and log records to the OTLP
+/// endpoint before the process exits.
 pub struct Telemetry {
     inner: Arc<TelemetryInner>,
 }
 
 struct TelemetryInner {
     provider: SdkTracerProvider,
+    logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
     export_failures: Arc<AtomicU64>,
+    log_export_failures: Arc<AtomicU64>,
     /// Guard for the thread-level tracing dispatcher default, used when the
     /// process-wide global default is already installed (e.g. in tests where
     /// multiple tests each call Telemetry::init).
@@ -133,6 +171,11 @@ impl Telemetry {
     /// until the process restarts.
     pub fn export_healthy(&self) -> bool {
         self.inner.export_failures.load(Ordering::Relaxed) == 0
+    }
+
+    /// Returns true if no log export has failed since the provider was created.
+    pub fn log_export_healthy(&self) -> bool {
+        self.inner.log_export_failures.load(Ordering::Relaxed) == 0
     }
 }
 
@@ -163,7 +206,7 @@ impl<T> fmt::Debug for Redacted<T> {
 }
 
 /// JSON event formatter that injects `service.name`, `service.version`,
-/// `environment`, and best-effort `trace_id`/`span_id` into every log event.
+/// `environment` into every log event.
 pub struct ServiceFields;
 
 impl<S, N> FormatEvent<S, N> for ServiceFields
@@ -240,18 +283,18 @@ fn environment() -> &'static str {
 }
 
 impl Telemetry {
-    /// Initialize OpenTelemetry tracing and install the global subscriber.
+    /// Initialize OpenTelemetry tracing and logging, and install the global
+    /// subscriber.
     ///
     /// The OTLP endpoint is taken from `RENZU_OTLP_ENDPOINT` (default
     /// [`DEFAULT_OTLP_ENDPOINT`]). The environment is taken from
     /// `RENZU_ENVIRONMENT` (default [`DEFAULT_ENVIRONMENT`]). Resource
     /// attributes `service.name` and `service.version` are recorded on every
-    /// span.
+    /// span and log record.
     ///
-    /// A JSON formatting layer and the OpenTelemetry layer (wrapped with
-    /// [`WithContext`] so trace context is available to log formatters) are
-    /// installed as the global tracing subscriber using `log_level`. Export
-    /// failures are logged, never fatal.
+    /// A JSON formatting layer, the OpenTelemetry trace layer, and the
+    /// OpenTelemetry log bridge layer are installed as the global tracing
+    /// subscriber using `log_level`. Export failures are logged, never fatal.
     pub fn init(log_level: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let endpoint = std::env::var("RENZU_OTLP_ENDPOINT")
             .unwrap_or_else(|_| DEFAULT_OTLP_ENDPOINT.to_string());
@@ -260,11 +303,15 @@ impl Telemetry {
             std::env::var("RENZU_ENVIRONMENT").unwrap_or_else(|_| DEFAULT_ENVIRONMENT.to_string());
         let _ = ENVIRONMENT.set(environment.clone());
 
+        // Build the log endpoint by replacing /traces with /logs
+        let log_endpoint = endpoint.replace("/v1/traces", "/v1/logs");
+
+        // Span exporter
         let exporter = opentelemetry_otlp::SpanExporter::builder()
             .with_http()
             .with_endpoint(&endpoint)
             .build()
-            .map_err(|e| format!("failed to build OTLP exporter: {e}"))?;
+            .map_err(|e| format!("failed to build OTLP span exporter: {e}"))?;
 
         let counting_exporter = CountingSpanExporter::new(exporter);
         let export_failures = counting_exporter.failures.clone();
@@ -281,8 +328,34 @@ impl Telemetry {
             )
             .build();
 
+        // Log exporter
+        let log_exporter = opentelemetry_otlp::LogExporter::builder()
+            .with_http()
+            .with_endpoint(&log_endpoint)
+            .build()
+            .map_err(|e| format!("failed to build OTLP log exporter: {e}"))?;
+
+        let counting_log_exporter = CountingLogExporter::new(log_exporter);
+        let log_export_failures = counting_log_exporter.failures.clone();
+
+        let logger_provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(counting_log_exporter)
+            .with_resource(
+                Resource::builder()
+                    .with_attributes(vec![
+                        KeyValue::new("service.name", SERVICE_NAME),
+                        KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+                    ])
+                    .build(),
+            )
+            .build();
+
+        // OpenTelemetry trace layer
         let tracer = provider.tracer(SERVICE_NAME);
         let otel_layer = tracing_opentelemetry::OpenTelemetryLayer::new(tracer);
+
+        // OpenTelemetry log bridge layer
+        let log_bridge = OpenTelemetryTracingBridge::new(&logger_provider);
 
         let env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
@@ -293,7 +366,8 @@ impl Telemetry {
 
         let subscriber = tracing_subscriber::registry()
             .with(fmt_layer)
-            .with(otel_layer);
+            .with(otel_layer)
+            .with(log_bridge);
 
         let _dispatch_guard = match subscriber.try_init() {
             Ok(()) => None,
@@ -304,48 +378,63 @@ impl Telemetry {
                 // they were moved into the first subscriber.
                 let otel_layer =
                     tracing_opentelemetry::OpenTelemetryLayer::new(provider.tracer(SERVICE_NAME));
+                let log_bridge = OpenTelemetryTracingBridge::new(&logger_provider);
                 let fmt_layer = tracing_subscriber::fmt::layer()
                     .json()
                     .event_format(ServiceFields)
                     .with_filter(env_filter.clone());
                 let subscriber = tracing_subscriber::registry()
                     .with(fmt_layer)
-                    .with(otel_layer);
+                    .with(otel_layer)
+                    .with(log_bridge);
                 Some(tracing::dispatcher::set_default(&tracing::Dispatch::from(
                     subscriber,
                 )))
             }
         };
 
-        tracing::info!(endpoint = %endpoint, "telemetry initialized");
+        tracing::info!(endpoint = %endpoint, log_endpoint = %log_endpoint, "telemetry initialized");
 
         Ok(Self {
             inner: Arc::new(TelemetryInner {
                 provider,
+                logger_provider,
                 export_failures,
+                log_export_failures,
                 _dispatch_guard,
             }),
         })
     }
 
-    /// Force a flush of all queued spans to the OTLP endpoint.
+    /// Force a flush of all queued spans and log records to the OTLP endpoint.
     ///
     /// Waits for the batch processor to drain its queue. Errors are logged,
     /// never fatal.
     pub fn force_flush(&self) {
         if let Err(e) = self.inner.provider.force_flush() {
-            tracing::warn!(error = %e, "telemetry force flush failed");
+            tracing::warn!(error = %e, "trace force flush failed");
+        }
+        if let Err(e) = self.inner.logger_provider.force_flush() {
+            tracing::warn!(error = %e, "log force flush failed");
         }
     }
 
-    /// Shut down the tracer provider, flushing in-flight spans.
+    /// Shut down the tracer and logger providers, flushing in-flight data.
     ///
     /// Waits up to [`SHUTDOWN_TIMEOUT`] for export to complete. Timeout or
     /// export errors are logged, never fatal.
     pub fn shutdown(&self) {
         match self.inner.provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
-            Ok(()) => tracing::debug!("telemetry shutdown complete"),
-            Err(e) => tracing::warn!(error = %e, "telemetry shutdown failed"),
+            Ok(()) => tracing::debug!("trace shutdown complete"),
+            Err(e) => tracing::warn!(error = %e, "trace shutdown failed"),
+        }
+        match self
+            .inner
+            .logger_provider
+            .shutdown_with_timeout(SHUTDOWN_TIMEOUT)
+        {
+            Ok(()) => tracing::debug!("log shutdown complete"),
+            Err(e) => tracing::warn!(error = %e, "log shutdown failed"),
         }
     }
 }

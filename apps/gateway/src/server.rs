@@ -135,6 +135,7 @@ pub fn app(
 }
 
 async fn health() -> Json<HealthResponse> {
+    tracing::info!(route = "/health", "health check requested");
     Json(HealthResponse {
         status: "healthy".to_string(),
         service: "gateway".to_string(),

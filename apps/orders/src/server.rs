@@ -33,6 +33,7 @@ pub fn app(telemetry: Telemetry) -> Router {
 }
 
 async fn health() -> Json<HealthResponse> {
+    tracing::info!(route = "/health", "health check requested");
     Json(HealthResponse {
         status: "healthy".to_string(),
         service: "orders".to_string(),
