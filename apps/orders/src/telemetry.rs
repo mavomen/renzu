@@ -8,8 +8,12 @@
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use opentelemetry_sdk::Resource;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
@@ -20,11 +24,72 @@ const DEFAULT_ENVIRONMENT: &str = "local";
 const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4317/v1/traces";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Wraps an OTLP span exporter, counting export failures so readiness can
+/// reflect exporter health.
+#[derive(Debug)]
+struct CountingSpanExporter {
+    inner: opentelemetry_otlp::SpanExporter,
+    failures: Arc<AtomicU64>,
+}
+
+impl CountingSpanExporter {
+    fn new(exporter: opentelemetry_otlp::SpanExporter) -> Self {
+        Self {
+            inner: exporter,
+            failures: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn failures(&self) -> Arc<AtomicU64> {
+        self.failures.clone()
+    }
+}
+
+impl SpanExporter for CountingSpanExporter {
+    fn export(
+        &self,
+        batch: Vec<SpanData>,
+    ) -> impl std::future::Future<Output = OTelSdkResult> + Send {
+        let failures = self.failures.clone();
+        async move {
+            match self.inner.export(batch).await {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    failures.fetch_add(1, Ordering::Relaxed);
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
+}
+
 pub struct Telemetry {
+    inner: Arc<TelemetryInner>,
+}
+
+struct TelemetryInner {
     provider: SdkTracerProvider,
+    export_failures: Arc<AtomicU64>,
+}
+
+impl Clone for Telemetry {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
 }
 
 impl Telemetry {
+    /// Returns true if no span export has failed since the provider was created.
+    pub fn export_healthy(&self) -> bool {
+        self.inner.export_failures.load(Ordering::Relaxed) == 0
+    }
+
     pub fn init(log_level: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let endpoint = std::env::var("RENZU_OTLP_ENDPOINT")
             .unwrap_or_else(|_| DEFAULT_OTLP_ENDPOINT.to_string());
@@ -35,8 +100,12 @@ impl Telemetry {
             .with_endpoint(&endpoint)
             .build()
             .map_err(|e| format!("failed to build OTLP exporter: {e}"))?;
+
+        let counting_exporter = CountingSpanExporter::new(exporter);
+        let export_failures = counting_exporter.failures();
+
         let provider = SdkTracerProvider::builder()
-            .with_batch_exporter(exporter)
+            .with_batch_exporter(counting_exporter)
             .with_resource(
                 Resource::builder()
                     .with_attributes(vec![
@@ -60,15 +129,23 @@ impl Telemetry {
             .try_init()
             .map_err(|e| format!("failed to install tracing subscriber: {e}"))?;
         tracing::info!(endpoint = %endpoint, "telemetry initialized");
-        Ok(Self { provider })
+
+        Ok(Self {
+            inner: Arc::new(TelemetryInner {
+                provider,
+                export_failures,
+            }),
+        })
     }
+
     pub fn force_flush(&self) {
-        if let Err(e) = self.provider.force_flush() {
+        if let Err(e) = self.inner.provider.force_flush() {
             tracing::warn!(error = %e, "telemetry force flush failed");
         }
     }
-    pub fn shutdown(self) {
-        match self.provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
+
+    pub fn shutdown(&self) {
+        match self.inner.provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
             Ok(()) => tracing::debug!("telemetry shutdown complete"),
             Err(e) => tracing::warn!(error = %e, "telemetry shutdown failed"),
         }
@@ -77,6 +154,6 @@ impl Telemetry {
 
 impl Drop for Telemetry {
     fn drop(&mut self) {
-        let _ = self.provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT);
+        self.shutdown();
     }
 }

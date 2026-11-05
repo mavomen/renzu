@@ -39,11 +39,11 @@ task marked [BLOCKED] until its dependency is resolved.
   Files: compose.yaml, deploy/otel-collector/config.yaml.
   Status: [DONE] — depends on F-013-02.
 
-- [ ] **HEALTH-02: Make service readiness reflect exporter state.**
+- [x] **HEALTH-02: Make service readiness reflect exporter state.**
   Readiness must degrade (not lie) when telemetry export fails. Expose
   export-failure counters and fold them into /ready.
   Files: apps/*/src/telemetry.rs, apps/*/src/server.rs.
-  Status: [PROPOSED].
+  Status: [DONE].
 
 - [ ] **CORR-01: Prove log/trace correlation with a test.**
   telemetry.rs documents trace_id/span_id correlation as a best-effort gap.

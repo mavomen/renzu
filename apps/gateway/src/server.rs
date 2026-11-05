@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::db;
 use crate::error::AppError;
 use crate::metrics::MetricsLayer;
+use crate::telemetry::Telemetry;
 
 #[derive(Serialize)]
 struct HealthResponse {
@@ -87,6 +88,7 @@ pub fn app(
     pool: Arc<db::DbPool>,
     orders_client: reqwest::Client,
     fault_state: Arc<FaultState>,
+    telemetry: Telemetry,
 ) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -117,6 +119,7 @@ pub fn app(
         .layer(Extension(pool))
         .layer(Extension(orders_client))
         .layer(Extension(fault_state))
+        .layer(Extension(telemetry))
         .layer(
             tower_http::trace::TraceLayer::new_for_http().make_span_with(
                 |req: &axum::http::Request<_>| {
@@ -141,6 +144,7 @@ async fn health() -> Json<HealthResponse> {
 async fn ready(
     Extension(pool): Extension<Arc<db::DbPool>>,
     Extension(fault_state): Extension<Arc<FaultState>>,
+    Extension(telemetry): Extension<Telemetry>,
 ) -> Result<Json<ReadyResponse>, AppError> {
     let span = Span::current();
 
@@ -151,6 +155,15 @@ async fn ready(
 
     // Database connection failure: the gateway degrades and reports not ready.
     if fault_state.is_database_connection_enabled() {
+        return Ok(Json(ReadyResponse {
+            status: "not ready".to_string(),
+            service: "gateway".to_string(),
+        }));
+    }
+
+    // Telemetry export failure: report not ready so load balancers stop sending
+    // traffic to a service that cannot export its own telemetry.
+    if !telemetry.export_healthy() {
         return Ok(Json(ReadyResponse {
             status: "not ready".to_string(),
             service: "gateway".to_string(),
@@ -374,10 +387,13 @@ pub async fn run(config: Config) -> Result<(), AppError> {
         .map_err(|e| AppError::Internal(format!("orders client build failed: {e}")))?;
 
     let fault_state = Arc::new(FaultState::default());
-    let app = app(pool.clone(), orders_client, fault_state).layer(MetricsLayer::new(metrics));
+    let telemetry = crate::telemetry::Telemetry::init(&config.log_level)
+        .map_err(|e| AppError::Internal(format!("telemetry init error: {e}")))?;
+    let app = app(pool.clone(), orders_client, fault_state, telemetry.clone())
+        .layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
-
     let result = axum::serve(listener, app).await;
+    telemetry.shutdown();
     let _ = metrics_handle.shutdown();
     pool.close().await;
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
