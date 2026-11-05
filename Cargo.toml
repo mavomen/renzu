@@ -18,9 +18,10 @@ thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tower-http = { version = "0.5", features = ["trace"] }
 tower = "0.5"
-reqwest = { version = "0.11", features = ["json", "blocking"] }
+reqwest = { version = "0.11", features = ["json", "blocking", "default-tls", "rustls-tls"] }
 opentelemetry = "0.33.1"
 opentelemetry_sdk = "0.33.1"
 opentelemetry-otlp = "0.33.1"
 tracing-opentelemetry = "0.34.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "migrate"] }
+hdrhistogram = "7"
