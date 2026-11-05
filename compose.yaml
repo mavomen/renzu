@@ -27,7 +27,9 @@ services:
       start_period: 15s
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.113.0
+    build:
+      context: .
+      dockerfile: deploy/otel-collector/Dockerfile
     container_name: renzu-otel-collector
     restart: unless-stopped
     depends_on:
@@ -39,17 +41,9 @@ services:
       - "127.0.0.1:4317:4317"   # OTLP gRPC receiver
       - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
       - "127.0.0.1:9464:9464"   # Prometheus-format metrics endpoint (scraped by Prometheus)
-    volumes:
-      - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
-    command: ["--config=/etc/otelcol/config.yaml"]
+      - "127.0.0.1:13133:13133" # Health check endpoint
     healthcheck:
-      # The otel/opentelemetry-collector-contrib image is distroless: it ships no shell
-      # and no probe tools (nc/curl/wget/true/busybox), so an in-container TCP
-      # connect to port 4317 is not possible. Instead, the healthcheck validates
-      # the collector config; a valid config is what binds the OTLP ports, and
-      # an invalid config prevents the container from serving telemetry at all.
-      # The result is visible via `docker compose ps` (healthy/unhealthy).
-      test: ["CMD", "/otelcol", "validate", "--config=/etc/otelcol/config.yaml"]
+      test: ["CMD", "curl", "-f", "http://localhost:13133/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3

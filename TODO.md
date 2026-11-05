@@ -31,13 +31,13 @@ task marked [BLOCKED] until its dependency is resolved.
   - F-013b: Trace/span ID correlation in logs
   Status: [DONE] — infrastructure provisioned. App export and correlation tracked separately.
 
-- [ ] **HEALTH-01: Fix the Collector healthcheck.**
+- [x] **HEALTH-01: Fix the Collector healthcheck.**
   The current healthcheck runs `otelcol validate`, which proves the config
   parses, not that the pipeline exports. Replace it with the Collector's
   health_check extension probing the pipeline, or assert on exporter
   metrics, so a broken pipeline cannot report healthy.
   Files: compose.yaml, deploy/otel-collector/config.yaml.
-  Status: [PROPOSED] — depends on F-013-02.
+  Status: [DONE] — depends on F-013-02.
 
 - [ ] **HEALTH-02: Make service readiness reflect exporter state.**
   Readiness must degrade (not lie) when telemetry export fails. Expose
