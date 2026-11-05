@@ -11,12 +11,12 @@
 
 use crate::scenarios::default_registry;
 use crate::scenarios::runner;
-use reqwest::blocking::Client;
+use hdrhistogram::Histogram;
+use reqwest::{blocking::Client as BlockingClient, Client};
 use serde::{Deserialize, Serialize};
-use std::sync::mpsc;
-use std::thread::sleep;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use tokio::runtime::Runtime;
 
 /// Base URL of the gateway fault-control and health API.
 const GATEWAY_BASE_URL: &str = "http://127.0.0.1:8080";
@@ -31,6 +31,10 @@ const MAX_CONCURRENCY: u64 = 100;
 
 /// Per-request timeout for load-test requests.
 const REQUEST_TIMEOUT_SECS: u64 = 10;
+
+/// Highest latency the histogram tracks (nanoseconds). Must exceed the request
+/// timeout so recorded latencies and coordinated-omission corrections fit.
+const MAX_LATENCY_NANOS: u64 = u64::MAX;
 
 /// Workload shape: either a fixed request rate or a concurrency level.
 #[derive(Debug, Clone)]
@@ -214,7 +218,9 @@ pub fn run_load_test(config: &LoadTestConfig) -> Result<LoadTestResult, LoadTest
         .find(&config.scenario)
         .ok_or_else(|| LoadTestError::UnknownScenario(config.scenario.clone()))?;
 
-    let client = Client::builder()
+    // Blocking client for gateway health checks and fault enable/disable.
+    // The scenarios runner keeps using this blocking client unchanged.
+    let client = BlockingClient::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .build()
         .map_err(|e| LoadTestError::HttpClient(e.to_string()))?;
@@ -235,7 +241,17 @@ pub fn run_load_test(config: &LoadTestConfig) -> Result<LoadTestResult, LoadTest
     // Enable the scenario's fault (if any), then always clean up.
     runner::enable_fault(&client, scenario).map_err(LoadTestError::EnableFault)?;
 
-    let generate_result = generate_load(&client, config);
+    // Async client for load generation, driven by a Tokio runtime created
+    // here so `main.rs` can stay synchronous.
+    let runtime = Runtime::new().map_err(|e| LoadTestError::HttpClient(e.to_string()))?;
+    let async_client = Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| LoadTestError::HttpClient(e.to_string()))?;
+    let config = config.clone();
+    let generate_result =
+        runtime.block_on(async move { generate_load(&async_client, &config).await });
+
     let disable_result = runner::disable_fault(&client, scenario);
 
     let mut result = match generate_result {
@@ -261,36 +277,43 @@ pub fn run_load_test(config: &LoadTestConfig) -> Result<LoadTestResult, LoadTest
 }
 
 /// Generate load against the target URL for the configured duration.
-fn generate_load(
+async fn generate_load(
     client: &Client,
     config: &LoadTestConfig,
 ) -> Result<LoadTestResult, LoadTestError> {
     let start = Instant::now();
     let deadline = start + config.duration;
 
-    let mut latencies: Vec<f64> = Vec::new();
+    let mut histogram = Histogram::<u64>::new_with_max(MAX_LATENCY_NANOS, 3)
+        .map_err(|e| LoadTestError::HttpClient(format!("failed to create histogram: {e}")))?;
     let mut total: u64 = 0;
     let mut successful: u64 = 0;
 
     match &config.workload {
-        Workload::Rate { rps } => run_rate_limited(
-            client,
-            config,
-            *rps,
-            &deadline,
-            &mut latencies,
-            &mut total,
-            &mut successful,
-        )?,
-        Workload::Concurrency { n } => run_concurrent(
-            client,
-            config,
-            *n,
-            &deadline,
-            &mut latencies,
-            &mut total,
-            &mut successful,
-        )?,
+        Workload::Rate { rps } => {
+            run_rate_limited(
+                client,
+                config,
+                *rps,
+                &deadline,
+                &mut histogram,
+                &mut total,
+                &mut successful,
+            )
+            .await?
+        }
+        Workload::Concurrency { n } => {
+            run_concurrent(
+                client,
+                config,
+                *n,
+                &deadline,
+                &mut histogram,
+                &mut total,
+                &mut successful,
+            )
+            .await?
+        }
     }
 
     let elapsed = start.elapsed();
@@ -300,7 +323,7 @@ fn generate_load(
     } else {
         0.0
     };
-    let latency = compute_latency_stats(&latencies);
+    let latency = compute_latency_stats_from_histogram(&histogram);
 
     Ok(LoadTestResult {
         run_id: String::new(),
@@ -314,59 +337,74 @@ fn generate_load(
     })
 }
 
-/// Send requests at a fixed rate, pacing them evenly across the duration.
-fn run_rate_limited(
+/// Send requests at a fixed rate, paced evenly across the duration.
+///
+/// Uses `tokio::time::interval`, which fires at fixed absolute times regardless
+/// of how long each request takes (open-loop). Slow responses therefore leave
+/// gaps that `record_correct` fills in, preserving tail-latency visibility.
+async fn run_rate_limited(
     client: &Client,
     config: &LoadTestConfig,
     rps: u64,
     deadline: &Instant,
-    latencies: &mut Vec<f64>,
+    histogram: &mut Histogram<u64>,
     total: &mut u64,
     successful: &mut u64,
 ) -> Result<(), LoadTestError> {
-    let interval = Duration::from_secs_f64(1.0 / rps as f64);
-    let mut next = Instant::now();
+    let pace = Duration::from_secs_f64(1.0 / rps as f64);
+    let interval_nanos = pace.as_nanos() as u64;
+    let mut ticker = tokio::time::interval(pace);
+
     while Instant::now() < *deadline {
-        let success = do_request(client, &config.url, latencies)?;
+        ticker.tick().await;
+        if Instant::now() >= *deadline {
+            break;
+        }
+        let start = Instant::now();
+        let result = client.get(&config.url).send().await;
+        let latency_nanos = start.elapsed().as_nanos() as u64;
         *total += 1;
-        if success {
-            *successful += 1;
+        if let Ok(response) = result {
+            if response.status().is_success() {
+                *successful += 1;
+            }
         }
-        next += interval;
-        if Instant::now() < next {
-            sleep(next - Instant::now());
-        }
+        let _ = histogram.record_correct(latency_nanos, interval_nanos).ok();
     }
+
     Ok(())
 }
 
-/// Run `n` threads, each sending requests as fast as possible until the deadline.
-fn run_concurrent(
+/// Run `n` tasks, each sending requests back-to-back until the deadline.
+///
+/// Each task records latencies into a local vector, then merges them into the
+/// shared histogram once all tasks finish.
+async fn run_concurrent(
     client: &Client,
     config: &LoadTestConfig,
     n: u64,
     deadline: &Instant,
-    latencies: &mut Vec<f64>,
+    histogram: &mut Histogram<u64>,
     total: &mut u64,
     successful: &mut u64,
 ) -> Result<(), LoadTestError> {
-    let (tx, rx) = mpsc::channel::<(Vec<f64>, u64, u64)>();
     let url = config.url.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<u64>, u64, u64)>(n as usize);
     let mut handles = Vec::with_capacity(n as usize);
 
     for _ in 0..n {
         let tx = tx.clone();
         let client = client.clone();
-        let deadline = *deadline;
         let url = url.clone();
-        let handle = std::thread::spawn(move || {
+        let deadline = *deadline;
+        let handle = tokio::spawn(async move {
             let mut local_latencies = Vec::new();
             let mut local_total: u64 = 0;
             let mut local_successful: u64 = 0;
             while Instant::now() < deadline {
                 let start = Instant::now();
-                let result = client.get(&url).send();
-                local_latencies.push(start.elapsed().as_secs_f64() * 1000.0);
+                let result = client.get(&url).send().await;
+                local_latencies.push(start.elapsed().as_nanos() as u64);
                 local_total += 1;
                 if let Ok(response) = result {
                     if response.status().is_success() {
@@ -374,40 +412,63 @@ fn run_concurrent(
                     }
                 }
             }
-            let _ = tx.send((local_latencies, local_total, local_successful));
+            let _ = tx
+                .send((local_latencies, local_total, local_successful))
+                .await;
         });
         handles.push(handle);
     }
 
     drop(tx);
-    for _ in 0..n {
-        let (mut local, local_total, local_successful) = rx
-            .recv()
-            .map_err(|e| LoadTestError::HttpClient(format!("{e:?}")))?;
-        latencies.append(&mut local);
+    while let Some((mut local, local_total, local_successful)) = rx.recv().await {
+        for latency_nanos in local.drain(..) {
+            histogram.saturating_record(latency_nanos);
+        }
         *total += local_total;
         *successful += local_successful;
     }
 
     for handle in handles {
-        let _ = handle.join();
+        let _ = handle.await;
     }
 
     Ok(())
 }
 
-/// Perform a single GET request, recording its latency and success.
-fn do_request(client: &Client, url: &str, latencies: &mut Vec<f64>) -> Result<bool, LoadTestError> {
-    let start = Instant::now();
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|e| LoadTestError::HttpClient(e.to_string()))?;
-    latencies.push(start.elapsed().as_secs_f64() * 1000.0);
-    Ok(response.status().is_success())
+/// Compute latency statistics from a histogram of nanosecond values, converting
+/// to milliseconds for the [`LatencyStats`] output.
+fn compute_latency_stats_from_histogram(histogram: &Histogram<u64>) -> LatencyStats {
+    if histogram.is_empty() {
+        return LatencyStats {
+            count: 0,
+            min_ms: 0.0,
+            max_ms: 0.0,
+            mean_ms: 0.0,
+            p50_ms: 0.0,
+            p95_ms: 0.0,
+            p99_ms: 0.0,
+        };
+    }
+
+    let count = histogram.len() as usize;
+    let nanos_to_ms = |nanos: u64| nanos as f64 / 1_000_000.0;
+
+    LatencyStats {
+        count,
+        min_ms: nanos_to_ms(histogram.min()),
+        max_ms: nanos_to_ms(histogram.max()),
+        mean_ms: histogram.mean() / 1_000_000.0,
+        p50_ms: nanos_to_ms(histogram.value_at_percentile(50.0)),
+        p95_ms: nanos_to_ms(histogram.value_at_percentile(95.0)),
+        p99_ms: nanos_to_ms(histogram.value_at_percentile(99.0)),
+    }
 }
 
 /// Compute latency statistics from observed latencies in milliseconds.
+///
+/// Retained as public API (and unit-tested); production load generation now
+/// feeds [`LatencyStats`] directly from the HdrHistogram.
+#[allow(dead_code)]
 pub fn compute_latency_stats(latencies: &[f64]) -> LatencyStats {
     if latencies.is_empty() {
         return LatencyStats {
@@ -443,6 +504,10 @@ pub fn compute_latency_stats(latencies: &[f64]) -> LatencyStats {
 /// Nearest-rank percentile of a sorted slice.
 ///
 /// Returns `0.0` for an empty slice.
+///
+/// Retained as public API helper (unit-tested); production load generation now
+/// uses the HdrHistogram directly.
+#[allow(dead_code)]
 fn percentile(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
