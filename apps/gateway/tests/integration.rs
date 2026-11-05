@@ -354,7 +354,8 @@ async fn ready_endpoint_returns_ready() {
         .build()
         .expect("client");
     let fault_state = Arc::new(gateway::server::FaultState::default());
-    let router = gateway::server::app(pool, orders_client, fault_state);
+    let telemetry = gateway::telemetry::Telemetry::init("info").expect("telemetry init");
+    let router = gateway::server::app(pool, orders_client, fault_state, telemetry);
     let request = Request::builder()
         .uri("/ready")
         .method("GET")
@@ -426,7 +427,8 @@ fn test_app() -> Router {
         .build()
         .expect("orders client should be created");
     let fault_state = Arc::new(gateway::server::FaultState::default());
-    gateway::server::app(pool, orders_client, fault_state)
+    let telemetry = gateway::telemetry::Telemetry::init("info").expect("telemetry init");
+    gateway::server::app(pool, orders_client, fault_state, telemetry)
 }
 
 /// Collect an axum response body into bytes.
