@@ -1,5 +1,5 @@
 # Docker Compose for the local observability environment.
-# Services: Jaeger + OpenTelemetry Collector (contrib) + Prometheus + Grafana + Loki + PostgreSQL,
+# Services: Tempo + OpenTelemetry Collector (contrib) + Prometheus + Grafana + Loki + PostgreSQL,
 # plus the orders and gateway application crates.
 #
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
@@ -10,17 +10,18 @@
 # Stop:                     docker compose down
 
 services:
-  jaeger:
-    image: jaegertracing/all-in-one:1.58.0
-    container_name: renzu-jaeger
+  tempo:
+    image: grafana/tempo:2.6.0
+    container_name: renzu-tempo
     restart: unless-stopped
     ports:
-      - "127.0.0.1:16686:16686"   # Jaeger query UI
-    # OTLP ports (4317 gRPC, 4318 HTTP) and the Jaeger collector port (14250)
-    # are consumed by the otel-collector over the Docker network; they are not
-    # published to the host to keep the host surface minimal.
+      - "127.0.0.1:3200:3200"   # Tempo HTTP API (query/ingest)
+    volumes:
+      - tempo_data:/var/tempo
+    command:
+      - "-config.file=/etc/tempo.yaml"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -33,7 +34,7 @@ services:
     container_name: renzu-otel-collector
     restart: unless-stopped
     depends_on:
-      jaeger:
+      tempo:
         condition: service_healthy
       loki:
         condition: service_healthy
@@ -48,7 +49,7 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
-    # Startup ordering is still enforced: the Collector waits for Jaeger to
+    # Startup ordering is still enforced: the Collector waits for Tempo to
     # report healthy via depends_on condition: service_healthy.
 
   prometheus:
@@ -186,3 +187,4 @@ services:
 volumes:
   postgres_data:
   loki_data:
+  tempo_data:

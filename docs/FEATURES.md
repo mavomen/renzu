@@ -231,8 +231,8 @@ Dependencies: F-003, F-006.
 **Objective:** Inspect trace spans and operation timing.
 
 Scope:
-- Configure Jaeger or another explicitly approved trace backend.
-- Expose the trace UI locally.
+- Configure Tempo as the approved trace backend.
+- Expose the trace UI via Grafana Explore.
 - Document trace lookup and investigation.
 - Verify resource and service attributes.
 
