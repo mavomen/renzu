@@ -1,6 +1,6 @@
 # Docker Compose for the local observability environment.
-# Services: OpenTelemetry Collector (contrib) + Jaeger + Prometheus + Grafana + Loki, plus the
-# gateway and orders application crates.
+# Services: Jaeger + OpenTelemetry Collector (contrib) + Prometheus + Grafana + Loki + PostgreSQL,
+# plus the orders and gateway application crates.
 #
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
 # Image tags are pinned explicitly (no :latest) (PRD NFR-01).

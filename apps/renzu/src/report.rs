@@ -63,6 +63,9 @@ pub struct LatencyReport {
     pub p99_ms: f64,
 }
 
+/// Current report schema version.
+const REPORT_SCHEMA_VERSION: u32 = 1;
+
 /// Diagnostic report for a single experiment run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunReport {
@@ -77,6 +80,7 @@ pub struct RunReport {
     pub throughput_rps: f64,
     pub telemetry_references: Vec<String>,
     pub warnings: Vec<String>,
+    pub schema_version: u32,
 }
 
 /// Current wall-clock time as an RFC 3339 UTC string (`2026-11-01T16:31:56Z`).
@@ -184,9 +188,10 @@ pub fn build_report(
                 .to_string(),
         );
     }
-    // telemetry_references is empty in F-018: loadgen does not collect trace IDs.
-    // Missing telemetry is reported explicitly as a warning, never as healthy.
-    warnings.push("missing telemetry: trace IDs are not collected in F-018".to_string());
+    // Only warn about missing telemetry if no references were collected.
+    if result.telemetry_references.is_empty() {
+        warnings.push("missing telemetry: trace IDs are not collected in F-018".to_string());
+    }
     RunReport {
         run_id: run_id.to_string(),
         scenario,
@@ -197,8 +202,9 @@ pub fn build_report(
         counts,
         latency,
         throughput_rps: result.throughput_rps,
-        telemetry_references: Vec::new(),
+        telemetry_references: result.telemetry_references.clone(),
         warnings,
+        schema_version: REPORT_SCHEMA_VERSION,
     }
 }
 
@@ -293,6 +299,7 @@ mod tests {
                 p95_ms: 20.0,
                 p99_ms: 40.0,
             },
+            telemetry_references: Vec::new(),
         }
     }
 
@@ -313,7 +320,12 @@ mod tests {
 
     #[test]
     fn build_report_matches_result() {
-        let result = sample_result();
+        let mut result = sample_result();
+        // Simulate telemetry references being collected
+        result.telemetry_references = vec![
+            "http://127.0.0.1:16686/trace/abc123".to_string(),
+            "http://127.0.0.1:3000/explore?orgId=1&left=[\"now-1h\",\"now\",\"Jaeger\",{\"query\":\"traceID\",\"traceID\":\"abc123\"}]".to_string(),
+        ];
         let report = build_report(
             "baseline-123",
             &result,
@@ -329,13 +341,20 @@ mod tests {
         assert_eq!(report.workload.kind, "rate");
         assert_eq!(report.workload.value, 20);
         assert_eq!(report.latency.p95_ms, 20.0);
-        assert!(report.telemetry_references.is_empty());
-        assert!(!report.warnings.is_empty());
+        assert_eq!(report.telemetry_references.len(), 2);
+        assert!(report.telemetry_references[0].contains("/trace/abc123"));
+        assert!(report.telemetry_references[1].contains("explore"));
+        assert!(report
+            .warnings
+            .iter()
+            .all(|w| !w.contains("missing telemetry")));
+        assert_eq!(report.schema_version, 1);
     }
 
     #[test]
     fn build_report_incomplete_has_warning() {
-        let result = sample_result();
+        let mut result = sample_result();
+        result.telemetry_references = Vec::new();
         let report = build_report(
             "baseline-123",
             &result,
@@ -344,6 +363,10 @@ mod tests {
         );
         assert_eq!(report.completion_status, CompletionStatus::Incomplete);
         assert!(report.warnings.iter().any(|w| w.contains("incomplete")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.contains("missing telemetry")));
     }
 
     #[test]
@@ -367,6 +390,7 @@ mod tests {
                 p95_ms: 25.0,
                 p99_ms: 28.0,
             },
+            telemetry_references: Vec::new(),
         };
         let report = build_report(
             "conc-1",
@@ -377,12 +401,17 @@ mod tests {
         assert_eq!(report.workload.kind, "concurrency");
         assert_eq!(report.workload.value, 8);
         assert_eq!(report.counts.total, 50);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|w| w.contains("missing telemetry")));
     }
 
     #[test]
     fn round_trip_uses_temp_dir() {
         with_temp_reports_dir(|| {
-            let result = sample_result();
+            let mut result = sample_result();
+            result.telemetry_references = vec!["http://jaeger/trace/xyz".to_string()];
             let report = build_report(
                 "rt-1",
                 &result,
@@ -394,6 +423,8 @@ mod tests {
             assert_eq!(read_back.run_id, report.run_id);
             assert_eq!(read_back.scenario, report.scenario);
             assert_eq!(read_back.completion_status, report.completion_status);
+            assert_eq!(read_back.schema_version, report.schema_version);
+            assert_eq!(read_back.telemetry_references, report.telemetry_references);
         });
     }
 

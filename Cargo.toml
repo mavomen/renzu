@@ -26,3 +26,4 @@ tracing-opentelemetry = "0.34.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "migrate"] }
 hdrhistogram = "7"
 opentelemetry-appender-tracing = "0.33.1"
+rand = "0.8"

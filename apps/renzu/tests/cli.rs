@@ -95,7 +95,7 @@ fn report_reads_saved_report() {
     let reports_dir = workspace_root().join("reports");
     fs::create_dir_all(&reports_dir).expect("create reports dir");
     let report_path = reports_dir.join(format!("{run_id}.json"));
-    let json = r#"{"run_id":"report-test-run","scenario":"baseline","start_time":"2026-01-01T00:00:00Z","duration_secs":10,"completion_status":"complete","workload":{"scenario":"baseline","duration_secs":10,"kind":"rate","value":20,"url":"http://127.0.0.1:8080/health"},"counts":{"total":100,"successful":95,"failed":5},"latency":{"count":100,"min_ms":1.0,"max_ms":50.0,"mean_ms":10.0,"p50_ms":9.0,"p95_ms":20.0,"p99_ms":40.0},"throughput_rps":10.0,"telemetry_references":[],"warnings":["missing telemetry: trace IDs are not collected in F-018"]}"#;
+    let json = r#"{"run_id":"report-test-run","scenario":"baseline","start_time":"2026-01-01T00:00:00Z","duration_secs":10,"completion_status":"complete","workload":{"scenario":"baseline","duration_secs":10,"kind":"rate","value":20,"url":"http://127.0.0.1:8080/health"},"counts":{"total":100,"successful":95,"failed":5},"latency":{"count":100,"min_ms":1.0,"max_ms":50.0,"mean_ms":10.0,"p50_ms":9.0,"p95_ms":20.0,"p99_ms":40.0},"throughput_rps":10.0,"telemetry_references":[],"warnings":["missing telemetry: trace IDs are not collected in F-018"],"schema_version":1}"#;
     fs::write(&report_path, json).expect("write report fixture");
     let output = renzu()
         .arg("report")
@@ -154,7 +154,8 @@ fn compare_prints_delta_table() {
   "latency": {{"count": {total}, "min_ms": 1.0, "max_ms": 10.0, "mean_ms": 5.0, "p50_ms": 5.0, "p95_ms": 9.0, "p99_ms": 10.0}},
   "throughput_rps": {throughput},
   "telemetry_references": [],
-  "warnings": []
+  "warnings": [],
+  "schema_version": 1
 }}"#
         );
         fs::write(&path, json).expect("write report fixture");
@@ -219,7 +220,8 @@ fn compare_flags_incompatible_runs() {
   "latency": {{"count": {total}, "min_ms": 1.0, "max_ms": 10.0, "mean_ms": 5.0, "p50_ms": 5.0, "p95_ms": 9.0, "p99_ms": 10.0}},
   "throughput_rps": {throughput},
   "telemetry_references": [],
-  "warnings": []
+  "warnings": [],
+  "schema_version": 1
 }}"#
         );
         fs::write(&path, json).expect("write report fixture");

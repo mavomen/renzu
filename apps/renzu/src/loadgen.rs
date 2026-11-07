@@ -36,6 +36,98 @@ const REQUEST_TIMEOUT_SECS: u64 = 10;
 /// timeout so recorded latencies and coordinated-omission corrections fit.
 const MAX_LATENCY_NANOS: u64 = u64::MAX;
 
+/// Jaeger base URL from environment, defaulting to local Jaeger.
+fn jaeger_base_url() -> String {
+    std::env::var("RENZU_JAEGER_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:16686".to_string())
+}
+
+/// Build telemetry reference URLs (Jaeger + Grafana Explore) for a trace ID.
+fn build_telemetry_refs(trace_id: &str, jaeger_base: &str) -> Vec<String> {
+    let mut refs = Vec::with_capacity(2);
+    refs.push(format!(
+        "{}/trace/{}",
+        jaeger_base.trim_end_matches('/'),
+        trace_id
+    ));
+    // Grafana Explore URL — reasonable default using Jaeger datasource name "Jaeger".
+    // Query format: /explore?orgId=1&left=["now-1h","now","Jaeger",{"query":"traceID","traceID":"<id>"}]
+    let grafana_url = format!(
+        "{}/explore?orgId=1&left=[\"now-1h\",\"now\",\"Jaeger\",{{\"query\":\"traceID\",\"traceID\":\"{}\"}}]",
+        jaeger_base.trim_end_matches('/').replace(":16686", ":3000"),
+        trace_id
+    );
+    refs.push(grafana_url);
+    refs
+}
+
+/// Generate a W3C traceparent header value: `00-<32-hex-trace-id>-<16-hex-span-id>-01`.
+fn generate_traceparent() -> (String, String) {
+    let trace_id: String = (0..16)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect();
+    let span_id: String = (0..8)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect();
+    let traceparent = format!("00-{}-{}-01", trace_id, span_id);
+    (trace_id, traceparent)
+}
+
+/// Per-request trace metadata collected during load generation.
+#[derive(Debug, Clone)]
+struct TraceRecord {
+    trace_id: String,
+    latency_nanos: u64,
+    success: bool,
+}
+
+/// Select trace IDs for telemetry references: all errors + slowest N (default 5),
+/// deduplicated. Returns Jaeger + Grafana Explore URLs for each selected trace ID.
+fn select_telemetry_references(records: &[TraceRecord]) -> Vec<String> {
+    if records.is_empty() {
+        return Vec::new();
+    }
+
+    const SLOWEST_N: usize = 5;
+
+    let error_ids: Vec<String> = records
+        .iter()
+        .filter(|r| !r.success)
+        .map(|r| r.trace_id.clone())
+        .collect();
+
+    let mut sorted_by_latency = records.to_vec();
+    sorted_by_latency.sort_by_key(|b| std::cmp::Reverse(b.latency_nanos));
+    let slowest_ids: Vec<String> = sorted_by_latency
+        .iter()
+        .take(SLOWEST_N)
+        .map(|r| r.trace_id.clone())
+        .collect();
+
+    // Deduplicate: combine error + slowest, unique
+    let mut all_ids = error_ids;
+    all_ids.extend(slowest_ids);
+    all_ids.sort();
+    all_ids.dedup();
+
+    let jaeger_base = jaeger_base_url();
+    let mut refs = Vec::new();
+    for trace_id in all_ids {
+        refs.extend(build_telemetry_refs(&trace_id, &jaeger_base));
+    }
+    refs
+}
+
+/// Inject traceparent header into a request builder.
+fn with_traceparent(
+    builder: reqwest::RequestBuilder,
+    traceparent: &str,
+) -> reqwest::RequestBuilder {
+    builder.header("traceparent", traceparent)
+}
+
 /// Workload shape: either a fixed request rate or a concurrency level.
 #[derive(Debug, Clone)]
 pub enum Workload {
@@ -84,6 +176,8 @@ pub struct LoadTestResult {
     pub failed: u64,
     pub throughput_rps: f64,
     pub latency: LatencyStats,
+    /// Deep links to traces for slowest/error requests: Jaeger and Grafana Explore URLs.
+    pub telemetry_references: Vec<String>,
 }
 
 /// Completion status of an experiment run.
@@ -288,6 +382,7 @@ async fn generate_load(
         .map_err(|e| LoadTestError::HttpClient(format!("failed to create histogram: {e}")))?;
     let mut total: u64 = 0;
     let mut successful: u64 = 0;
+    let mut trace_records: Vec<TraceRecord> = Vec::new();
 
     match &config.workload {
         Workload::Rate { rps } => {
@@ -299,6 +394,7 @@ async fn generate_load(
                 &mut histogram,
                 &mut total,
                 &mut successful,
+                &mut trace_records,
             )
             .await?
         }
@@ -311,6 +407,7 @@ async fn generate_load(
                 &mut histogram,
                 &mut total,
                 &mut successful,
+                &mut trace_records,
             )
             .await?
         }
@@ -324,6 +421,7 @@ async fn generate_load(
         0.0
     };
     let latency = compute_latency_stats_from_histogram(&histogram);
+    let telemetry_references = select_telemetry_references(&trace_records);
 
     Ok(LoadTestResult {
         run_id: String::new(),
@@ -334,9 +432,11 @@ async fn generate_load(
         failed,
         throughput_rps,
         latency,
+        telemetry_references,
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Send requests at a fixed rate, paced evenly across the duration.
 ///
 /// Uses `tokio::time::interval`, which fires at fixed absolute times regardless
@@ -350,6 +450,7 @@ async fn run_rate_limited(
     histogram: &mut Histogram<u64>,
     total: &mut u64,
     successful: &mut u64,
+    trace_records: &mut Vec<TraceRecord>,
 ) -> Result<(), LoadTestError> {
     let pace = Duration::from_secs_f64(1.0 / rps as f64);
     let interval_nanos = pace.as_nanos() as u64;
@@ -360,21 +461,32 @@ async fn run_rate_limited(
         if Instant::now() >= *deadline {
             break;
         }
+        let (trace_id, traceparent) = generate_traceparent();
         let start = Instant::now();
-        let result = client.get(&config.url).send().await;
+        let result = with_traceparent(client.get(&config.url), &traceparent)
+            .send()
+            .await;
         let latency_nanos = start.elapsed().as_nanos() as u64;
         *total += 1;
-        if let Ok(response) = result {
-            if response.status().is_success() {
-                *successful += 1;
-            }
+        let success = result
+            .as_ref()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if success {
+            *successful += 1;
         }
+        trace_records.push(TraceRecord {
+            trace_id,
+            latency_nanos,
+            success,
+        });
         let _ = histogram.record_correct(latency_nanos, interval_nanos).ok();
     }
 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Run `n` tasks, each sending requests back-to-back until the deadline.
 ///
 /// Each task records latencies into a local vector, then merges them into the
@@ -387,9 +499,10 @@ async fn run_concurrent(
     histogram: &mut Histogram<u64>,
     total: &mut u64,
     successful: &mut u64,
+    trace_records: &mut Vec<TraceRecord>,
 ) -> Result<(), LoadTestError> {
     let url = config.url.clone();
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<u64>, u64, u64)>(n as usize);
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<TraceRecord>, u64, u64)>(n as usize);
     let mut handles = Vec::with_capacity(n as usize);
 
     for _ in 0..n {
@@ -398,22 +511,32 @@ async fn run_concurrent(
         let url = url.clone();
         let deadline = *deadline;
         let handle = tokio::spawn(async move {
-            let mut local_latencies = Vec::new();
+            let mut local_records = Vec::new();
             let mut local_total: u64 = 0;
             let mut local_successful: u64 = 0;
             while Instant::now() < deadline {
+                let (trace_id, traceparent) = generate_traceparent();
                 let start = Instant::now();
-                let result = client.get(&url).send().await;
-                local_latencies.push(start.elapsed().as_nanos() as u64);
+                let result = with_traceparent(client.get(&url), &traceparent)
+                    .send()
+                    .await;
+                let latency_nanos = start.elapsed().as_nanos() as u64;
                 local_total += 1;
-                if let Ok(response) = result {
-                    if response.status().is_success() {
-                        local_successful += 1;
-                    }
+                let success = result
+                    .as_ref()
+                    .map(|r| r.status().is_success())
+                    .unwrap_or(false);
+                if success {
+                    local_successful += 1;
                 }
+                local_records.push(TraceRecord {
+                    trace_id,
+                    latency_nanos,
+                    success,
+                });
             }
             let _ = tx
-                .send((local_latencies, local_total, local_successful))
+                .send((local_records, local_total, local_successful))
                 .await;
         });
         handles.push(handle);
@@ -421,8 +544,9 @@ async fn run_concurrent(
 
     drop(tx);
     while let Some((mut local, local_total, local_successful)) = rx.recv().await {
-        for latency_nanos in local.drain(..) {
-            histogram.saturating_record(latency_nanos);
+        for record in local.drain(..) {
+            histogram.saturating_record(record.latency_nanos);
+            trace_records.push(record);
         }
         *total += local_total;
         *successful += local_successful;
