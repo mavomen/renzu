@@ -1,14 +1,14 @@
 # OpenTelemetry Collector configuration for F-003 (local infrastructure), extended by F-007, F-010, and F-013.
 # Pipelines:
-#   traces:   otlp -> batch -> otlphttp -> jaeger:4318
+#   traces:   otlp -> batch -> otlphttp -> tempo:4318
 #   metrics:  otlp -> batch -> prometheus (endpoint 0.0.0.0:9464, scraped by Prometheus)
 #   logs:     otlp -> batch -> loki (endpoint http://loki:3100/loki/api/v1/push)
 # The Collector binds OTLP on 0.0.0.0 so the application can reach it; published
 # ports are mapped to 127.0.0.1 in compose.yaml.
 #
 # Note: the `jaeger` exporter was removed from the OTel Collector in recent
-# versions; the `otlphttp` exporter is used instead, targeting Jaeger's OTLP
-# HTTP receiver (jaeger:4318). Jaeger all-in-one accepts OTLP on 4317/4318.
+# versions; the `otlphttp` exporter is used instead, targeting Tempo's OTLP
+# HTTP receiver (tempo:4318). Tempo accepts OTLP on 4318.
 #
 # The `health_check` extension exposes a /healthz HTTP endpoint on 13133. The
 # image is distroless (no shell/nc/curl/wget), so compose.yaml probes the
@@ -33,7 +33,7 @@ receivers:
 
 exporters:
   otlphttp:
-    endpoint: http://jaeger:4318
+    endpoint: http://tempo:4318
   prometheus:
     endpoint: 0.0.0.0:9464
   loki:

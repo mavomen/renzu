@@ -45,24 +45,31 @@ task marked [BLOCKED] until its dependency is resolved.
   Files: apps/*/src/telemetry.rs, apps/*/src/server.rs.
   Status: [DONE].
 
-- [ ] **CORR-01: Prove log/trace correlation with a test.**
+- [x] **CORR-01: Prove log/trace correlation with a test.**
   telemetry.rs documents trace_id/span_id correlation as a best-effort gap.
   Prefer the OpenTelemetry log bridge (opentelemetry-appender-tracing) so logs
   leave as OTLP LogRecords carrying native trace and span IDs. Add a test that
   asserts a log emitted inside a handler span carries the same trace ID as the
   Jaeger trace.
   Files: apps/*/src/telemetry.rs, tests/.
-  Status: [PROPOSED] — depends on F-013-02.
+  Status: [DONE] — both gateway and orders wire `OpenTelemetryTracingBridge` into
+  their tracing subscriber, export OTLP LogRecords via `SdkLoggerProvider`/
+  `SimpleLogProcessor`, and have `log_and_trace_share_trace_id` integration tests
+  asserting log `trace_id == span.trace_id`. Dependencies on F-013-02 satisfied.
 
-- [ ] **REPORT-01: Fill telemetry_references in experiment reports.**
-  Reports currently carry an empty telemetry_references field with a warning.
-  Loadgen mints a W3C traceparent per request, records trace IDs for errors and
-  the slowest N per run, and the runner writes them into the report with deep
-  links (Jaeger /trace/<id>, Grafana Explore). Force sampling for these requests
-  so references are never dangling. Version the report schema.
-  Files: apps/renzu/src/loadgen.rs, apps/renzu/src/report.rs,
-  apps/renzu/src/scenarios/runner.rs, docs/.
-  Status: [PROPOSED] — depends on CORR-01.
+- [x] **REPORT-01: Fill telemetry_references in experiment reports.**
+  Reports now carry populated telemetry_references with deep links.
+  - `loadgen.rs:67-76` — `generate_traceparent()` mints W3C traceparent (`00-<trace>-<span>-01`, force sampling) per request
+  - `loadgen.rs:88-121` — `select_telemetry_references()` selects error trace IDs + slowest 5, deduplicates, builds Jaeger (`/trace/<id>`) + Grafana Explore URLs
+  - `loadgen.rs:180` — `LoadTestResult.telemetry_references: Vec<String>` populated via `select_telemetry_references(&trace_records)`
+  - `report.rs:67` — `REPORT_SCHEMA_VERSION: u32 = 1`
+  - `report.rs:83` — `RunReport.schema_version: u32` field
+  - `report.rs:205` — `telemetry_references: result.telemetry_references.clone()` populated from load test result
+  - `report.rs:192-194` — warning about missing telemetry only fires when references empty (conditional, not hardcoded)
+  - `main.rs:520-531` — CLI sets run_id, builds report, writes to disk
+  - `report.rs:322-370, 410-429` — unit tests for schema_version, non-empty references, round-trip
+  Files: apps/renzu/src/loadgen.rs, apps/renzu/src/report.rs, apps/renzu/src/main.rs.
+  Status: [DONE] — implementation complete, verified by cargo test --workspace --lib.
 
 - [ ] **E2E-01: Add E2E suite for the observability tools.**
   Bring up the stack, run one scenario, and assert on each backend's API:

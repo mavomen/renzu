@@ -40,12 +40,12 @@ flowchart LR
     end
 
     Apps -->|OTLP: traces, metrics, logs| COL[OpenTelemetry Collector]
-    COL --> JAE[Jaeger]
+    COL --> TEM[Tempo]
     COL --> PROM[Prometheus]
     COL --> LOGS[(Log backend: decision pending)]
     PROM --> GRAF[Grafana]
     LOGS --> GRAF
-    Dev --> JAE
+    Dev --> TEM
     Dev --> GRAF
 ```
 
@@ -80,9 +80,9 @@ Every service:
 | Component | Responsibility | Milestone |
 |---|---|---|
 | OpenTelemetry Collector | Single ingest point (OTLP); batching, resource attributes, routing to backends | M1 (traces), M2 (metrics, logs) |
-| Jaeger | Trace storage and UI | M1 |
+| Tempo | Trace storage and query (via Grafana) | M1 |
 | Prometheus | Metrics storage and query | M2 |
-| Grafana | Dashboards for metrics (and logs, if the backend supports it) | M2 |
+| Grafana | Dashboards for metrics, Explore for traces/logs | M2 |
 | Log backend | Log storage and query. **Decision pending (ADR-0002); Loki is the leading candidate** | Decision in M0, provisioned in M2 |
 
 Services export to the Collector rather than directly to backends. This keeps backend choices out of application code and makes the pipeline itself observable. In M1, logs go to structured stdout only; they join the pipeline once the log backend is provisioned.
@@ -139,8 +139,8 @@ The storage format and location are decided in M3. Telemetry availability and ex
 1. The load generator (or a manual request) sends an HTTP request to the entry service.
 2. The entry service starts a root span, then calls the downstream service and PostgreSQL. Trace context travels in standard propagation headers on each outbound call.
 3. Each service emits logs, spans, and metrics using OTLP to the Collector.
-4. The Collector batches telemetry and exports traces to Jaeger, metrics to Prometheus, and logs to the chosen log backend.
-5. The developer inspects traces in Jaeger, metrics and dashboards in Grafana, and logs through the log backend's interface.
+4. The Collector batches telemetry and exports traces to Tempo, metrics to Prometheus, and logs to the chosen log backend.
+5. The developer inspects traces in Grafana Explore (Tempo), metrics and dashboards in Grafana, and logs through the log backend's interface.
 
 Metrics may reach Prometheus through Collector export or direct scraping of service endpoints. This choice is made in M2 and recorded in an ADR.
 
@@ -200,7 +200,7 @@ The architecture is built in vertical slices. Do not create components ahead of 
 
 | Slice | Contents |
 |---|---|
-| M1: First observable service | One service, Collector, Jaeger, structured stdout logs, minimal Compose |
+| M1: First observable service | One service, Collector, Tempo, structured stdout logs, minimal Compose |
 | M2: Distributed | Metrics and dashboards, PostgreSQL, second service, log backend, log-trace correlation |
 | M3 and M4: Incidents and CLI | Scenarios, load generation, reports, lifecycle commands, end-to-end tests |
 | M5: Extensions | Profiling, comparison, SLOs, more scenarios |
@@ -216,6 +216,7 @@ Significant decisions are recorded as ADRs in `docs/decisions/`.
 | 0001 | Reference repository reconnaissance (license, runnable examples, versions) | Accepted (M0) |
 | 0002 | Log backend selection (candidate: Loki) | Accepted (M0) |
 | 0003 | Project license | Accepted (M0) |
+| 0006 | Trace backend selection (Tempo) | Accepted (M1) |
 | TBD | Minimum supported Rust toolchain | Open |
 | TBD | CLI orchestration: direct Compose control vs documented layer | Open |
 | TBD | Metrics path: Collector export vs Prometheus scraping | Open (M2) |

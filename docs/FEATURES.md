@@ -231,8 +231,8 @@ Dependencies: F-003, F-006.
 **Objective:** Inspect trace spans and operation timing.
 
 Scope:
-- Configure Jaeger or another explicitly approved trace backend.
-- Expose the trace UI locally.
+- Configure Tempo as the approved trace backend.
+- Expose the trace UI via Grafana Explore.
 - Document trace lookup and investigation.
 - Verify resource and service attributes.
 
@@ -353,9 +353,9 @@ Acceptance criteria:
 - Correlation behavior is tested or demonstrated.
 - No unsupported cross-backend correlation is claimed.
 
-Known limitation: F-013b (trace/span ID correlation in logs) remains outstanding. Loki is provisioned and the Collector logs pipeline is configured, but applications do not yet export OTLP logs and trace IDs are not yet injected into log fields.
+Known limitation: None. Both gateway and orders services export OTLP logs via the OpenTelemetry log bridge (`opentelemetry-appender-tracing`), and log records carry native trace_id and span_id fields. Integration tests in both services (`log_and_trace_share_trace_id`) assert that logs emitted inside a handler span carry the same trace ID as the exported span.
 
-Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria.
+Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria. F-013b is implemented and tested within each service.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
