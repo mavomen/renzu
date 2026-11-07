@@ -272,6 +272,7 @@ mod tests {
             throughput_rps,
             telemetry_references: Vec::new(),
             warnings: Vec::new(),
+            schema_version: 1,
         }
     }
 
