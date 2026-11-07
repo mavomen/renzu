@@ -23,6 +23,7 @@ tracing-opentelemetry = { workspace = true }
 sqlx = { workspace = true }
 reqwest = { workspace = true }
 console-subscriber = { version = "0.1", optional = true }
+opentelemetry-appender-tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -32,3 +33,4 @@ hyper-util = "0.1"
 opentelemetry-proto = "0.33.1"
 prost = "0.14"
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
+hex = "0.4"

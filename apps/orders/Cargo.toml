@@ -16,6 +16,15 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+tower = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+http-body-util = "0.1"
+hyper = "1"
+hyper-util = "0.1"
+opentelemetry-proto = "0.33.1"
+prost = "0.14"
+hex = "0.4"
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
