@@ -3,17 +3,25 @@
 ## Overview
 
 The local observability environment is orchestrated with Docker Compose and
-contains two infrastructure services only (M1 slice):
+contains eight services:
 
-- **OpenTelemetry Collector** — single OTLP ingest point (traces and metrics).
-- **Jaeger** — trace storage and query UI.
+- **Tempo** — trace storage and query (replaces Jaeger per ADR-06).
+- **OpenTelemetry Collector** — single OTLP ingest point (traces, metrics, logs).
+- **Prometheus** — metrics storage and query.
+- **Grafana** — visualization UI for traces, metrics, and logs.
+- **Loki** — log aggregation and query.
+- **PostgreSQL** — application database for orders and gateway.
+- **Orders** — application service (Rust crate).
+- **Gateway** — application service (Rust crate), proxies to Orders and Postgres.
 
-No application services run here yet; the first Rust crate lands in F-004.
+All published ports are bound to `127.0.0.1` only (PRD NFR-04).
+Image tags are pinned explicitly (no `:latest`) (PRD NFR-01).
 
 ## Prerequisites
 
 - Docker Engine and Docker Compose (Compose V2, `docker compose`).
-- Approximately 1–2 GB RAM and 2–4 GB disk for the two containers plus image layers.
+- Approximately 4.75 CPU cores and 4.5 GB RAM for all containers combined (see Resource Estimates below).
+- Approximately 5–10 GB disk for volumes plus image layers.
 - No cloud account, paid service, or external AI API required (local-first).
 
 ## Startup
@@ -22,14 +30,18 @@ No application services run here yet; the first Rust crate lands in F-004.
 docker compose up -d
 ```
 
-Startup order is enforced: the Collector starts only after Jaeger reports
-healthy (`depends_on` with `condition: service_healthy`).
+Startup order is enforced via `depends_on` with `condition: service_healthy`:
+- Collector waits for Tempo and Loki.
+- Prometheus waits for Collector.
+- Grafana waits for Prometheus and Loki.
+- Orders waits for Collector.
+- Gateway waits for Postgres and Collector.
 
 ```bash
 docker compose ps
 ```
 
-Expected output: both services report `healthy`.
+Expected output: all eight services report `healthy`.
 
 ## Ports table
 
@@ -37,31 +49,37 @@ All published ports are bound to `127.0.0.1` only (PRD NFR-04).
 
 | Service | Port (host) | Container port | Purpose |
 |---------|-------------|----------------|---------|
-| Jaeger | 127.0.0.1:16686 | 16686 | Jaeger query UI |
+| Tempo | 127.0.0.1:3200 | 3200 | Tempo HTTP API (query/ingest) |
 | OTel Collector | 127.0.0.1:4317 | 4317 | OTLP gRPC receiver |
 | OTel Collector | 127.0.0.1:4318 | 4318 | OTLP HTTP receiver |
+| OTel Collector | 127.0.0.1:9464 | 9464 | Prometheus metrics endpoint |
+| OTel Collector | 127.0.0.1:13133 | 13133 | Health check endpoint |
+| Prometheus | 127.0.0.1:9090 | 9090 | Prometheus query UI + API |
+| Loki | 127.0.0.1:3100 | 3100 | Loki HTTP API |
+| Grafana | 127.0.0.1:3000 | 3000 | Grafana UI |
+| PostgreSQL | 127.0.0.1:5432 | 5432 | PostgreSQL |
+| Orders | 127.0.0.1:8081 | 8081 | Orders HTTP API |
+| Gateway | 127.0.0.1:8080 | 8080 | Gateway HTTP API |
 
-Jaeger's OTLP ports (4317/4318) and the Jaeger collector port (14250) are
-reached by the Collector over the Docker network (`jaeger:14250`); they are not
-published to the host.
+Inter-service communication (e.g., Collector → Tempo, Gateway → Postgres) uses
+Docker network DNS names; those ports are not published to the host.
 
 ## Health checks
 
 | Service | Probe | Meaning |
 |---------|-------|---------|
-| Jaeger | `curl http://localhost:16686/` (HTTP 200) | Jaeger query UI is up and serving. |
-| OTel Collector | `otelcol validate --config=/etc/otelcol/config.yaml` (config validation) | Collector config is valid; a valid config is what binds the OTLP ports (4317/4318). |
+| Tempo | `wget -qO- http://localhost:3200/ready` | Tempo ready endpoint returns 200. |
+| OTel Collector | `curl -f http://localhost:13133/healthz` | Collector health extension reports healthy. |
+| Prometheus | `wget -qO- http://localhost:9090/-/healthy` | Prometheus healthy endpoint returns 200. |
+| Loki | `wget -qO- http://localhost:3100/ready` | Loki ready endpoint returns 200. |
+| Grafana | `wget -qO- http://localhost:3000/api/health` | Grafana health API returns 200. |
+| PostgreSQL | `pg_isready -U $RENZU_DB_USER -d $RENZU_DB_NAME` | Postgres accepts connections. |
+| Orders | `wget -qO- http://localhost:8081/health` | Orders health endpoint returns 200. |
+| Gateway | `wget -qO- http://localhost:8080/health` | Gateway health endpoint returns 200. |
 
-The otel/opentelemetry-collector image is distroless: it ships no shell and no probe
-tools (nc/curl/wget), so an in-container TCP connect to port 4317 is not possible.
-The healthcheck therefore validates the collector config instead. `docker compose ps`
-reports `healthy` once validation passes, `starting` during the `start_period`, and
-`unhealthy` after `retries` consecutive failures. An invalid config prevents the
-collector from serving telemetry at all, so config validation is a meaningful proxy
-for port binding.
+All healthchecks use `interval: 10s`, `timeout: 3s`, `retries: 3`, `start_period: 15s`.
 
-Startup failures produce actionable diagnostics via `docker compose logs
-<service>`.
+Startup failures produce actionable diagnostics via `docker compose logs <service>`.
 
 ## Shutdown
 
@@ -69,9 +87,8 @@ Startup failures produce actionable diagnostics via `docker compose logs
 docker compose down
 ```
 
-Removes the containers and the network. Named volumes are not used in F-003, so
-no persistent data is removed by `down`. Jaeger in-memory trace data is
-discarded on shutdown (expected for the M1 slice).
+Removes the containers and the network. Named volumes (`postgres_data`, `loki_data`, `tempo_data`)
+are preserved; run `docker compose down -v` to remove them.
 
 Verify no leftover project-owned containers:
 
@@ -79,9 +96,43 @@ Verify no leftover project-owned containers:
 docker ps -a --filter name=renzu-
 ```
 
+## Resource estimates
+
+Each service declares `deploy.resources.limits` in `compose.yaml`. The values below
+are **estimates**, not measured capacities. They serve as a starting point for
+local development; the maintainer should measure actual usage under load and tune
+accordingly. Too-low limits may cause OOM kills or CPU throttling.
+
+### Per-service limits
+
+| Service | CPU (cores) | Memory | Disk (volume) | Notes |
+|---------|-------------|--------|---------------|-------|
+| Tempo | 0.5 | 512 MiB | `tempo_data` (persistent) | Trace storage grows with retention. |
+| OTel Collector | 0.5 | 512 MiB | — (no volume) | Build-based image; buffers in memory. |
+| Prometheus | 1.0 | 1 GiB | — (config-only) | TSDB in memory; add volume for persistence if needed. |
+| Loki | 0.5 | 512 MiB | `loki_data` (persistent) | Log chunks + index. |
+| Grafana | 0.25 | 256 MiB | — (provisioning read-only) | Dashboards/provisioning via bind mounts. |
+| PostgreSQL | 0.5 | 512 MiB | `postgres_data` (persistent) | Database files; grows with data. |
+| Orders | 0.25 | 256 MiB | — (no volume) | Application crate; stateless. |
+| Gateway | 0.25 | 256 MiB | — (no volume) | Application crate; stateless. |
+
+### Total environment footprint (limits)
+
+| Resource | Sum of limits |
+|----------|---------------|
+| CPU | 3.75 cores |
+| Memory | 4.25 GiB |
+| Disk (volumes) | Variable — depends on trace/log/DB retention |
+
+> **Note:** Docker Compose `deploy.resources.limits` are enforced by the container
+> runtime (cgroups). The host must have at least the summed CPU and memory
+> available. If the host has fewer resources, containers will be throttled or
+> OOM-killed. These estimates assume a development machine with ≥ 4 CPU cores
+> and ≥ 8 GiB RAM.
+
 ## Telemetry smoke test (manual, requires Docker)
 
-Send a test OTLP span to the Collector and confirm it appears in Jaeger:
+Send a test OTLP span to the Collector and confirm it appears in Tempo (via Grafana):
 
 ```bash
 # Export via OTLP HTTP to the Collector
@@ -90,36 +141,36 @@ curl -X POST http://127.0.0.1:4318/v1/traces \
   -d '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoke-test"}}]},"spans":[{"traceId":"0123456789abcdef0123456789abcdef","spanId":"0123456789abcdef","name":"smoke-span","kind":1,"startTimeUnixNano":"1000","endTimeUnixNano":"2000","status":{"code":1}}]}]}'
 ```
 
-Then open the Jaeger UI at http://127.0.0.1:16686 and query service
-`smoke-test`.
+Then open Grafana at http://127.0.0.1:3000 (admin/admin), navigate to the
+Tempo data source, and query service `smoke-test`.
 
-## Trace Visualization (Jaeger UI)
+## Trace Visualization (Tempo + Grafana)
 
 Once the gateway has been exercised against the Collector (for example via
-`scripts/e2e-trace-visualization.sh`), traces are queryable in Jaeger:
+`scripts/e2e-trace-visualization.sh`), traces are queryable in Grafana:
 
-1. Open http://127.0.0.1:16686 in a browser.
-2. From the "Service" dropdown, select `gateway`.
-3. Click "Find Traces".
-4. Inspect each trace:
+1. Open http://127.0.0.1:3000 in a browser (login: admin/admin).
+2. From the "Explore" view, select the Tempo data source.
+3. From the "Service" dropdown, select `gateway`.
+4. Click "Run query".
+5. Inspect each trace:
    - Span `operationName` shows the instrumented route (for example `GET /health`).
-   - Span `duration` shows the operation timing (microseconds; should be > 0).
+   - Span `duration` shows the operation timing (should be > 0).
    - Span tags show `http.method` and `http.route`.
-   - Process tags show `service.name=gateway` (the resource attribute set by the
-     gateway and passed through the Collector unchanged).
+   - Resource attributes show `service.name=gateway`.
 
 Automated verification:
 
 ```bash
-# Requires docker compose up -d (jaeger + otel-collector) to be running.
+# Requires docker compose up -d (all services) to be running.
 ./scripts/e2e-trace-visualization.sh
 ```
 
 The script builds and runs the gateway, hits `GET /health`, `/ready` and `/`,
-polls the Jaeger API (`http://127.0.0.1:16686/api/traces?service=gateway`),
-and asserts that traces appear with `service.name=gateway` as a resource
-attribute and span durations greater than zero. It exits 0 on success and
-always stops the gateway process it started; compose is left running.
+polls the Tempo API via Grafana, and asserts that traces appear with
+`service.name=gateway` as a resource attribute and span durations greater than
+zero. It exits 0 on success and always stops the gateway process it started;
+compose is left running.
 
 ## Batching
 
@@ -131,15 +182,15 @@ memory pressure requires it (see docs/decisions/0005-opentelemetry-collector-pip
 ## Resource attributes
 
 Resource attributes (`service.name`, `service.version`) are set by the gateway
-application (F-006 ADR) and flow through the collector unchanged. The collector
+and orders applications and flow through the collector unchanged. The collector
 does not add a resource processor; it passes through attributes supplied by the
 application. This avoids speculative abstraction and keeps attribute ownership in
 the application.
 
-## Application logging (F-005)
+## Application logging
 
-The gateway emits newline-delimited JSON logs to stdout (M1 behavior; they join
-the Loki pipeline in F-013/M2). No log backend is provisioned here.
+The gateway and orders emit newline-delimited JSON logs to stdout. Logs are
+collected by the OTel Collector and forwarded to Loki (M2/F-013).
 
 Each log event is a JSON object with at least these fields:
 
@@ -181,28 +232,25 @@ emitted as-is. Documented sensitive keys: `Authorization`, `Cookie`,
 - Redaction only applies where call sites opt in; unredacted sensitive data
   logged directly is not caught.
 
-
 ## Error handling and export failure observability
 
 - Collector export failures are logged to the container's stdout/stderr and are
   never silently dropped. Inspect them with `docker compose logs otel-collector`.
-- Gateway-side export failures are logged by the gateway (F-006 behavior) and are
+- Gateway/Orders-side export failures are logged by the application and are
   never fatal to the application.
-- If the collector reports `unhealthy` in `docker compose ps`, telemetry export is
-  degraded or unavailable; check `docker compose logs otel-collector` and validate
-  the config with `otelcol validate --config=/etc/otelcol/config.yaml`.
-- The metrics pipeline currently exports to `debug` (stdout) as a local placeholder;
-  it is swapped to Prometheus in F-010. Until then, metrics are observable in the
-  collector logs, not in a metrics backend.
+- If any service reports `unhealthy` in `docker compose ps`, telemetry export is
+  degraded or unavailable; check `docker compose logs <service>`.
+- The metrics pipeline currently exports to Prometheus (via Collector) and is
+  scraped by Prometheus. Metrics are queryable in Grafana.
 
 ## Known limitations
 
-- Jaeger stores traces in memory only; data is lost on restart (M1 slice).
+- Tempo, Loki, and PostgreSQL use named volumes for persistence; data survives
+  `docker compose down` but not `docker compose down -v`.
 - Runtime validation (`docker compose up`) requires a Docker daemon and the
   ability to pull pinned images. If either is unavailable, `docker compose
   config` still validates the YAML.
-- Health-check probes assume the collector image ships probe tools; the pinned
-  `otel/opentelemetry-collector:0.113.0` image is distroless and ships none, so the
-  collector healthcheck validates its config instead of running an in-container TCP
-  connect. If the image changes to one with a shell/probe tools, the probe can be
-  revisited.
+- Resource limits are estimates. If containers are OOM-killed or CPU-throttled
+  under load, raise the corresponding limits in `compose.yaml` and re-test.
+- Health-check probes assume the service images ship the required probe tools
+  (wget, curl, pg_isready). The pinned images used here include them.

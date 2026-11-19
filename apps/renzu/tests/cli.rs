@@ -1,4 +1,5 @@
 use renzu::run;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -24,18 +25,30 @@ fn invalid_arg_exits_non_zero() {
 }
 
 #[test]
-fn stub_subcommands_exit_zero() {
-    for args in [
-        vec!["renzu", "scenario", "list"],
-        vec!["renzu", "scenario", "run", "name"],
-        vec!["renzu", "load-test", "--scenario", "name"],
-    ] {
-        assert_eq!(run(args), ExitCode::from(0));
-    }
+fn scenario_subcommands_exit_codes_match_behavior() {
+    // `scenario list` succeeds and prints known scenario names to stdout.
+    let list = run(["renzu", "scenario", "list"]);
+    assert_eq!(list, ExitCode::from(0));
+
+    // `scenario run` with an unknown scenario fails with exit 1.
+    let run_unknown = run(["renzu", "scenario", "run", "no-such-scenario"]);
+    assert_eq!(run_unknown, ExitCode::from(1));
+
+    // `load-test` requires --rate or --concurrency before scenario validation;
+    // an unknown scenario with a valid workload fails with exit 2 (Usage).
+    let load_unknown = run([
+        "renzu",
+        "load-test",
+        "--scenario",
+        "no-such-scenario",
+        "--rate",
+        "1",
+    ]);
+    assert_eq!(load_unknown, ExitCode::from(2));
 }
 
 #[test]
-fn stub_subcommand_prints_not_implemented_to_stderr() {
+fn scenario_list_prints_names_to_stdout_with_empty_stderr() {
     let bin = std::env::var("CARGO_BIN_EXE_renzu")
         .expect("CARGO_BIN_EXE_renzu is set by cargo for integration tests");
     let output = std::process::Command::new(&bin)
@@ -45,7 +58,20 @@ fn stub_subcommand_prints_not_implemented_to_stderr() {
         .expect("failed to execute renzu binary");
     assert_eq!(output.status.code(), Some(0));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("renzu scenario list: not yet implemented"));
+    assert!(stderr.is_empty(), "unexpected stderr: {stderr}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("baseline"),
+        "stdout missing scenario: {stdout}"
+    );
+    assert!(
+        stdout.contains("otel-collector-down"),
+        "stdout missing scenario: {stdout}"
+    );
+    assert!(
+        stdout.contains("db-connection-failure"),
+        "stdout missing scenario: {stdout}"
+    );
 }
 
 #[test]
@@ -69,7 +95,7 @@ fn report_reads_saved_report() {
     let reports_dir = workspace_root().join("reports");
     fs::create_dir_all(&reports_dir).expect("create reports dir");
     let report_path = reports_dir.join(format!("{run_id}.json"));
-    let json = r#"{"run_id":"report-test-run","scenario":"baseline","start_time":"2026-01-01T00:00:00Z","duration_secs":10,"completion_status":"complete","workload":{"scenario":"baseline","duration_secs":10,"kind":"rate","value":20,"url":"http://127.0.0.1:8080/health"},"counts":{"total":100,"successful":95,"failed":5},"latency":{"count":100,"min_ms":1.0,"max_ms":50.0,"mean_ms":10.0,"p50_ms":9.0,"p95_ms":20.0,"p99_ms":40.0},"throughput_rps":10.0,"telemetry_references":[],"warnings":["missing telemetry: trace IDs are not collected in F-018"]}"#;
+    let json = r#"{"run_id":"report-test-run","scenario":"baseline","start_time":"2026-01-01T00:00:00Z","duration_secs":10,"completion_status":"complete","workload":{"scenario":"baseline","duration_secs":10,"kind":"rate","value":20,"url":"http://127.0.0.1:8080/health"},"counts":{"total":100,"successful":95,"failed":5},"latency":{"count":100,"min_ms":1.0,"max_ms":50.0,"mean_ms":10.0,"p50_ms":9.0,"p95_ms":20.0,"p99_ms":40.0},"throughput_rps":10.0,"telemetry_references":[],"warnings":["missing telemetry: trace IDs are not collected in F-018"],"schema_version":1}"#;
     fs::write(&report_path, json).expect("write report fixture");
     let output = renzu()
         .arg("report")
@@ -128,7 +154,8 @@ fn compare_prints_delta_table() {
   "latency": {{"count": {total}, "min_ms": 1.0, "max_ms": 10.0, "mean_ms": 5.0, "p50_ms": 5.0, "p95_ms": 9.0, "p99_ms": 10.0}},
   "throughput_rps": {throughput},
   "telemetry_references": [],
-  "warnings": []
+  "warnings": [],
+  "schema_version": 1
 }}"#
         );
         fs::write(&path, json).expect("write report fixture");
@@ -193,7 +220,8 @@ fn compare_flags_incompatible_runs() {
   "latency": {{"count": {total}, "min_ms": 1.0, "max_ms": 10.0, "mean_ms": 5.0, "p50_ms": 5.0, "p95_ms": 9.0, "p99_ms": 10.0}},
   "throughput_rps": {throughput},
   "telemetry_references": [],
-  "warnings": []
+  "warnings": [],
+  "schema_version": 1
 }}"#
         );
         fs::write(&path, json).expect("write report fixture");
@@ -230,11 +258,98 @@ fn compare_flags_incompatible_runs() {
 }
 
 fn docker_compose_available() -> bool {
-    std::process::Command::new("docker")
-        .arg("compose")
+    let docker_version = std::process::Command::new("docker")
         .arg("version")
+        .arg("--format")
+        .arg("{{.Server.Version}}")
         .output()
-        .is_ok()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !docker_version {
+        return false;
+    }
+
+    let compose_config = std::process::Command::new("docker")
+        .arg("compose")
+        .arg("config")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false);
+    if !compose_config {
+        return false;
+    }
+
+    let output = match std::process::Command::new("docker")
+        .arg("compose")
+        .arg("config")
+        .arg("--format")
+        .arg("json")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    let config: serde_json::Value = match serde_json::from_slice(&output.stdout) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let services = match config.get("services").and_then(|s| s.as_object()) {
+        Some(s) => s,
+        None => return false,
+    };
+
+    let images_output = match std::process::Command::new("docker")
+        .arg("images")
+        .arg("--format")
+        .arg("{{.Repository}}:{{.Tag}}")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+
+    let available_images: HashSet<String> = String::from_utf8_lossy(&images_output.stdout)
+        .lines()
+        .map(|s| s.to_string())
+        .collect();
+
+    for (_, service) in services {
+        if let Some(build) = service.get("build") {
+            let image_name = if let Some(ctx) = build.get("context").and_then(|c| c.as_str()) {
+                let dockerfile = build
+                    .get("dockerfile")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("Dockerfile");
+                let path = std::path::Path::new(ctx).join(dockerfile);
+                if path.exists() {
+                    let name = std::path::Path::new(ctx)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown");
+                    format!("renzu-{name}:latest")
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+            if !available_images.contains(&image_name) {
+                return false;
+            }
+        } else if let Some(image) = service.get("image").and_then(|i| i.as_str()) {
+            if !available_images.contains(image) {
+                return false;
+            }
+        }
+    }
+
+    true
 }
 
 fn renzu() -> std::process::Command {

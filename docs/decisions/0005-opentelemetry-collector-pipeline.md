@@ -7,11 +7,11 @@
 ## Context
 
 F-003 provisions the OpenTelemetry Collector container
-(`otel/opentelemetry-collector:0.113.0`) alongside Jaeger. F-006 instruments the
+(`otel/opentelemetry-collector-contrib:0.113.0`) alongside Jaeger. F-006 instruments the
 `gateway` to export OTLP traces over HTTP/protobuf to the collector. F-007
 configures the collector pipeline so exported traces and metrics are collected,
 batched, and delivered to configured backends, with observable collector health
-and export failures.
+and export failures. F-013 adds the logs pipeline and Loki backend.
 
 The gateway sends traces to `http://127.0.0.1:4317/v1/traces` (F-006 default,
 overridable via `RENZU_OTLP_ENDPOINT`). The OTLP HTTP exporter posts to the
@@ -34,8 +34,10 @@ metrics placeholder with this pinned image.
   not published to the host).
 - `otlp` receiver on 0.0.0.0:4317 (gRPC) and 0.0.0.0:4318 (HTTP).
 - Traces pipeline: `otlp -> batch -> otlphttp` (endpoint `http://jaeger:4318`).
-- Metrics pipeline: `otlp -> batch -> debug` (stdout placeholder, local only).
-- `batch` processor (default settings) on both pipelines.
+- Metrics pipeline: `otlp -> batch -> prometheus` (endpoint `0.0.0.0:9464`,
+  scraped by Prometheus).
+- Logs pipeline: `otlp -> batch -> loki` (endpoint `http://loki:3100/loki/api/v1/push`).
+- `batch` processor (default settings) on all pipelines.
 - No resource attributes processor: `service.name`/`service.version` are set by
   the gateway (F-006 ADR) and pass through the collector unchanged.
 
@@ -48,50 +50,19 @@ metrics placeholder with this pinned image.
   image; exit 0 means the config is valid, which is what binds the OTLP ports.
   Result reported via `docker compose ps` (healthy/unhealthy). This is a config
   validity proxy, not a live TCP connect; documented as such in the runbook.
-- `depends_on: jaeger: service_healthy` preserves startup ordering.
+- `depends_on: jaeger: service_healthy` and `depends_on: loki: service_healthy` preserve startup ordering.
 
-**Metrics exporter target:** deferred to F-010. `debug` (stdout) is the local
-placeholder; F-010 swaps it for Prometheus once that backend exists. Documented
-as temporary in the runbook and ADR.
+**Metrics exporter target:** defined in F-010. `prometheus` exporter is used; the
+`debug` placeholder was temporary and has been replaced.
 
-**Metrics pipeline:** defined now (F-007) to satisfy "define the metrics
-pipeline" without depending on F-010's backend; delivery to a metrics backend is
+**Logs exporter target:** defined in F-013. `loki` exporter targets Loki's native
+OTLP endpoint (`/loki/api/v1/push`). No separate log shipper is required.
+
+**Metrics pipeline:** defined in F-007 to satisfy "define the metrics pipeline"
+without depending on F-010's backend; delivery to a metrics backend is
 verified in F-010.
 
-## Consequences
-
-### Positive
-
-- Traces flow end-to-end: gateway OTLP HTTP -> collector `otlp` receiver ->
-  `batch` -> `otlphttp` -> Jaeger OTLP HTTP receiver (jaeger:4318).
-- `batch` reduces export request count and smooths traffic to Jaeger.
-- Collector health observable via `docker compose ps`; startup ordering enforced
-  by `depends_on` on healthy Jaeger.
-- Export failures are logged (collector stdout/stderr; gateway stderr) and never
-  silently discarded or fatal (AGENTS.md §7).
-
-### Negative / trade-offs
-
-- `otelcol validate` healthcheck validates config statically; it does not confirm
-  the running process is actively listening on 4317. An invalid config prevents
-  the container from serving, so validity is a meaningful proxy for port binding.
-- `debug` exporter writes metrics to stdout only; metrics are not stored or
-  queryable until F-010 (Prometheus).
-- `logging` exporter unavailable in 0.113.0; `debug` used instead. If a future
-  collector version re-adds or re-deprecates `debug`, the placeholder exporter
-  must be revisited.
-- No resource attributes processor in the collector; attribute ownership stays in
-  the gateway. Drift between F-006/F-008/F-010 conventions must be managed by
-  the application.
-
-## Related decisions
-
-- F-003: Local Infrastructure Orchestration (collector container).
-- F-006: Distributed Trace Instrumentation (gateway OTLP export).
-- F-007: OpenTelemetry Collector Pipeline (this work).
-- F-008: Distributed Trace Visualization (Jaeger backend).
-- F-010: Prometheus metrics backend (swaps `debug` for Prometheus).
-- ADR-0004: OpenTelemetry Rust Crate Selection (resource attributes, span naming,
-  shutdown behavior).
-- AGENTS.md §7: observability conventions (export failures observable, never
-  fatal; no high-cardinality labels).
+**Logs pipeline:** defined in F-013. Applications currently write structured JSON
+logs to stdout (F-005) and do not yet export OTLP logs. The Collector logs
+pipeline is configured but idle until application-side OTLP log export is added
+(out of scope for F-013-01).

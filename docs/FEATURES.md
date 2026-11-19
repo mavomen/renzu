@@ -114,7 +114,7 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Provide a repeatable local environment.
 
@@ -132,6 +132,8 @@ Acceptance criteria:
 - Health status distinguishes ready services from unhealthy services.
 - Startup failures produce actionable diagnostics.
 - Shutdown behavior is documented and tested.
+
+Known limitation: No automated test verifies the infrastructure orchestration. The e2e CI job runs `docker compose up` but fails on otel-collector/jaeger dependency. Health check behavior, startup dependencies, and shutdown behavior lack automated verification.
 
 Dependencies: F-002.
 
@@ -224,13 +226,13 @@ Dependencies: F-003, F-006.
 
 ### F-008: Distributed Trace Visualization
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Inspect trace spans and operation timing.
 
 Scope:
-- Configure Jaeger or another explicitly approved trace backend.
-- Expose the trace UI locally.
+- Configure Tempo as the approved trace backend.
+- Expose the trace UI via Grafana Explore.
 - Document trace lookup and investigation.
 - Verify resource and service attributes.
 
@@ -239,6 +241,8 @@ Acceptance criteria:
 - Span relationships and durations are visible.
 - Failed operations can be identified.
 - UI access instructions are documented.
+
+Known limitation: No automated test verifies trace visualization. The e2e trace visualization script (`scripts/e2e-trace-visualization.sh`) fails in CI due to otel-collector/jaeger dependency issue. Trace UI access and span inspection lack automated verification.
 
 Dependencies: F-007.
 
@@ -330,7 +334,7 @@ Dependencies: F-006, F-007, F-008. (F-006 and F-007 provide the instrumentation 
 
 ### F-013: Log Pipeline and Trace Correlation
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 **Objective:** Ship application logs to the chosen backend and connect them with distributed traces.
 
@@ -348,6 +352,10 @@ Acceptance criteria:
 - A developer can use those identifiers to locate the corresponding trace.
 - Correlation behavior is tested or demonstrated.
 - No unsupported cross-backend correlation is claimed.
+
+Known limitation: None. Both gateway and orders services export OTLP logs via the OpenTelemetry log bridge (`opentelemetry-appender-tracing`), and log records carry native trace_id and span_id fields. Integration tests in both services (`log_and_trace_share_trace_id`) assert that logs emitted inside a handler span carry the same trace ID as the exported span.
+
+Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria. F-013b is implemented and tested within each service.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
@@ -478,7 +486,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -490,6 +498,8 @@ Acceptance criteria:
 - Profiling instructions work on the documented environment.
 - Profiling results can be inspected.
 - Tooling overhead and limitations are documented.
+
+Known limitation: No automated test verifies the profiling workflow. This feature is documentation-only; no test verifies profiling instructions work, results can be inspected, or tooling overhead is measured.
 
 Dependencies: F-018.
 

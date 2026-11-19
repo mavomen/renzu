@@ -1,4 +1,4 @@
-use axum::extract::Path;
+use axum::extract::{Extension, Path};
 use axum::{response::Json, routing::get, Router};
 use serde::Serialize;
 use serde_json::json;
@@ -7,6 +7,7 @@ use tracing::{info, instrument, Span};
 
 use crate::config::Config;
 use crate::error::AppError;
+use crate::telemetry::Telemetry;
 use tower_http::trace::TraceLayer;
 
 #[derive(Serialize)]
@@ -21,25 +22,34 @@ struct ReadyResponse {
     service: String,
 }
 
-pub fn app() -> Router {
+pub fn app(telemetry: Telemetry) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/", get(root))
         .route("/order/:id", get(order))
+        .layer(Extension(telemetry))
         .layer(TraceLayer::new_for_http())
 }
 
 async fn health() -> Json<HealthResponse> {
+    tracing::info!(route = "/health", "health check requested");
     Json(HealthResponse {
         status: "healthy".to_string(),
         service: "orders".to_string(),
     })
 }
 
-async fn ready() -> Json<ReadyResponse> {
+async fn ready(Extension(telemetry): Extension<Telemetry>) -> Json<ReadyResponse> {
+    // Telemetry export failure: report not ready so load balancers stop sending
+    // traffic to a service that cannot export its own telemetry.
+    let status = if telemetry.export_healthy() {
+        "ready"
+    } else {
+        "not ready"
+    };
     Json(ReadyResponse {
-        status: "ready".to_string(),
+        status: status.to_string(),
         service: "orders".to_string(),
     })
 }
@@ -73,7 +83,7 @@ pub async fn run(config: Config) -> Result<(), AppError> {
     })?;
     let telemetry = crate::telemetry::Telemetry::init(&config.log_level)
         .map_err(|e| AppError::Internal(format!("telemetry init error: {e}")))?;
-    let app = app();
+    let app = app(telemetry.clone());
     info!(address = %addr, "orders service listening");
     let result = axum::serve(listener, app).await;
     telemetry.shutdown();

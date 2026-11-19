@@ -1,6 +1,6 @@
 # Docker Compose for the local observability environment.
-# Scope: OpenTelemetry Collector + Jaeger + Prometheus + Grafana (M1 slice).
-# No application services yet; the first Rust crate lands in F-004.
+# Services: Tempo + OpenTelemetry Collector (contrib) + Prometheus + Grafana + Loki + PostgreSQL,
+# plus the orders and gateway application crates.
 #
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
 # Image tags are pinned explicitly (no :latest) (PRD NFR-01).
@@ -10,49 +10,56 @@
 # Stop:                     docker compose down
 
 services:
-  jaeger:
-    image: jaegertracing/all-in-one:1.58.0
-    container_name: renzu-jaeger
+  tempo:
+    image: grafana/tempo:2.6.0
+    container_name: renzu-tempo
     restart: unless-stopped
     ports:
-      - "127.0.0.1:16686:16686"   # Jaeger query UI
-    # OTLP ports (4317 gRPC, 4318 HTTP) and the Jaeger collector port (14250)
-    # are consumed by the otel-collector over the Docker network; they are not
-    # published to the host to keep the host surface minimal.
+      - "127.0.0.1:3200:3200"   # Tempo HTTP API (query/ingest)
+    volumes:
+      - tempo_data:/var/tempo
+    command:
+      - "-config.file=/etc/tempo.yaml"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 15s
 
   otel-collector:
-    image: otel/opentelemetry-collector:0.113.0
+    build:
+      context: .
+      dockerfile: deploy/otel-collector/Dockerfile
     container_name: renzu-otel-collector
     restart: unless-stopped
     depends_on:
-      jaeger:
+      tempo:
+        condition: service_healthy
+      loki:
         condition: service_healthy
     ports:
       - "127.0.0.1:4317:4317"   # OTLP gRPC receiver
       - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
       - "127.0.0.1:9464:9464"   # Prometheus-format metrics endpoint (scraped by Prometheus)
-    volumes:
-      - ./deploy/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
-    command: ["--config=/etc/otelcol/config.yaml"]
+      - "127.0.0.1:13133:13133" # Health check endpoint
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
-      # The otel/opentelemetry-collector image is distroless: it ships no shell
-      # and no probe tools (nc/curl/wget/true/busybox), so an in-container TCP
-      # connect to port 4317 is not possible. Instead, the healthcheck validates
-      # the collector config; a valid config is what binds the OTLP ports, and
-      # an invalid config prevents the container from serving telemetry at all.
-      # The result is visible via `docker compose ps` (healthy/unhealthy).
-      test: ["CMD", "/otelcol", "validate", "--config=/etc/otelcol/config.yaml"]
+      test: ["CMD", "curl", "-f", "http://localhost:13133/healthz"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 15s
-    # Startup ordering is still enforced: the Collector waits for Jaeger to
+    # Startup ordering is still enforced: the Collector waits for Tempo to
     # report healthy via depends_on condition: service_healthy.
 
   prometheus:
@@ -66,11 +73,38 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.listen-address=0.0.0.0:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1g"
     depends_on:
       otel-collector:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: renzu-loki
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3100:3100"   # Loki HTTP API
+    volumes:
+      - loki_data:/loki
+    command:
+      - "-config.file=/etc/loki/local-config.yaml"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready >/dev/null || exit 1"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -89,8 +123,15 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256m"
     depends_on:
       prometheus:
+        condition: service_healthy
+      loki:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health >/dev/null || exit 1"]
@@ -111,6 +152,11 @@ services:
       - POSTGRES_DB=${RENZU_DB_NAME:-renzu}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${RENZU_DB_USER:-renzu} -d ${RENZU_DB_NAME:-renzu}"]
       interval: 10s
@@ -131,6 +177,12 @@ services:
       - RENZU_HOST=0.0.0.0
       - RENZU_PORT=8081
       - RENZU_LOG_LEVEL=info
+      - RENZU_OTLP_ENDPOINT=http://otel-collector:4317/v1/traces
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256m"
     depends_on:
       otel-collector:
         condition: service_healthy
@@ -141,5 +193,38 @@ services:
       retries: 3
       start_period: 15s
 
+  gateway:
+    build:
+      context: .
+      dockerfile: apps/gateway/Dockerfile
+    container_name: renzu-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # Gateway HTTP
+    environment:
+      - RENZU_HOST=0.0.0.0
+      - RENZU_PORT=8080
+      - RENZU_LOG_LEVEL=info
+      - RENZU_DATABASE_URL=postgres://renzu:renzu@postgres:5432/renzu
+      - RENZU_ORDERS_URL=http://orders:8081
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256m"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
 volumes:
   postgres_data:
+  loki_data:
+  tempo_data:

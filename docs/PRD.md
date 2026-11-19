@@ -219,7 +219,7 @@ Requirements:
 - Use OpenTelemetry-compatible instrumentation and export where supported.
 - Use an OpenTelemetry Collector for telemetry pipeline management.
 - Provide Prometheus for metrics and Grafana for visualization.
-- Provide Jaeger for trace inspection.
+- Provide Tempo (via Grafana) for trace inspection.
 - Select the log storage and query backend during M0 and record the decision in an ADR (`docs/decisions/`). Loki is the leading candidate because of its Grafana integration and support for linking log lines to traces, but it is not decided until the ADR exists. Evaluate candidates on local resource footprint, OTLP ingestion path, Grafana integration, and trace-ID linking.
 - Include health checks and troubleshooting guidance.
 
@@ -460,7 +460,7 @@ These are initial technology choices subject to verification during repository r
 | Telemetry pipeline | OpenTelemetry Collector |
 | Metrics | Prometheus |
 | Dashboards | Grafana |
-| Trace visualization | Jaeger |
+| Trace visualization | Tempo (via Grafana) |
 | Log backend | **To be decided in M0 via ADR** (candidate: Loki) |
 | Database | PostgreSQL |
 | CLI | `clap` |
@@ -585,7 +585,7 @@ Deliverables:
 
 - One Rust HTTP service.
 - Structured logs and request instrumentation.
-- A working trace export path through the Collector to Jaeger.
+- A working trace export path through the Collector to Tempo (via Grafana).
 - A minimal local observability environment.
 - The project license.
 
