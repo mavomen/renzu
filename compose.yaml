@@ -20,6 +20,11 @@ services:
       - tempo_data:/var/tempo
     command:
       - "-config.file=/etc/tempo.yaml"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3200/ready >/dev/null || exit 1"]
       interval: 10s
@@ -43,6 +48,11 @@ services:
       - "127.0.0.1:4318:4318"   # OTLP HTTP receiver
       - "127.0.0.1:9464:9464"   # Prometheus-format metrics endpoint (scraped by Prometheus)
       - "127.0.0.1:13133:13133" # Health check endpoint
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:13133/healthz"]
       interval: 10s
@@ -63,6 +73,11 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--web.listen-address=0.0.0.0:9090"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: "1g"
     depends_on:
       otel-collector:
         condition: service_healthy
@@ -83,6 +98,11 @@ services:
       - loki_data:/loki
     command:
       - "-config.file=/etc/loki/local-config.yaml"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready >/dev/null || exit 1"]
       interval: 10s
@@ -103,6 +123,11 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256m"
     depends_on:
       prometheus:
         condition: service_healthy
@@ -127,6 +152,11 @@ services:
       - POSTGRES_DB=${RENZU_DB_NAME:-renzu}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512m"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${RENZU_DB_USER:-renzu} -d ${RENZU_DB_NAME:-renzu}"]
       interval: 10s
@@ -148,6 +178,11 @@ services:
       - RENZU_PORT=8081
       - RENZU_LOG_LEVEL=info
       - RENZU_OTLP_ENDPOINT=http://otel-collector:4317/v1/traces
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256m"
     depends_on:
       otel-collector:
         condition: service_healthy
@@ -172,6 +207,11 @@ services:
       - RENZU_LOG_LEVEL=info
       - RENZU_DATABASE_URL=postgres://renzu:renzu@postgres:5432/renzu
       - RENZU_ORDERS_URL=http://orders:8081
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: "256m"
     depends_on:
       postgres:
         condition: service_healthy
