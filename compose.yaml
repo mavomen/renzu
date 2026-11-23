@@ -18,6 +18,7 @@ services:
       - "127.0.0.1:3200:3200"   # Tempo HTTP API (query/ingest)
     volumes:
       - tempo_data:/var/tempo
+      - ./deploy/tempo/tempo.yaml:/etc/tempo.yaml:ro
     command:
       - "-config.file=/etc/tempo.yaml"
     deploy:
