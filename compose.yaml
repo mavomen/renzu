@@ -16,6 +16,7 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3200:3200"   # Tempo HTTP API (query/ingest)
+      - "127.0.0.1:4319:4318"   # Tempo OTLP HTTP receiver (for direct trace submission)
     volumes:
       - tempo_data:/var/tempo
       - ./deploy/tempo/tempo.yaml:/etc/tempo.yaml:ro
