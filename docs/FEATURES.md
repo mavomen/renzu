@@ -330,7 +330,7 @@ Dependencies: F-006, F-007, F-008. (F-006 and F-007 provide the instrumentation 
 
 ### F-013: Log Pipeline and Trace Correlation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Ship application logs to the chosen backend and connect them with distributed traces.
 
@@ -350,8 +350,6 @@ Acceptance criteria:
 - No unsupported cross-backend correlation is claimed.
 
 Known limitation: None. Both gateway and orders services export OTLP logs via the OpenTelemetry log bridge (`opentelemetry-appender-tracing`), and log records carry native trace_id and span_id fields. Integration tests in both services (`log_and_trace_share_trace_id`) assert that logs emitted inside a handler span carry the same trace ID as the exported span.
-
-Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria. F-013b is implemented and tested within each service.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
