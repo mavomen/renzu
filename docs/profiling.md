@@ -61,6 +61,34 @@ Or generate a flamegraph:
 sudo perf script | stackcollapse-perf.pl | flamegraph.pl > cpu.svg
 ```
 
+### orders
+
+Build the orders service with profiling disabled:
+
+```bash
+cargo build --release -p orders
+```
+
+Start the orders service (or the full environment via `renzu up`), then run a load test while recording:
+
+```bash
+# Start the service
+./target/release/orders &
+
+# Run a repeatable profiling workload
+renzu load-test --scenario baseline --duration 60 --rate 100 \
+    --url http://127.0.0.1:8081/health
+
+# In another terminal, record CPU samples while the load test runs
+sudo perf record -F 99 -a -g -- sleep 60
+```
+
+Inspect:
+
+```bash
+sudo perf report --stdio
+```
+
 ### Overhead and limitations
 
 - `perf` sampling adds minimal overhead (~1-3% at 99 Hz).
@@ -137,6 +165,29 @@ to block the current task for inspection.
 - Task names are derived from the `#[instrument]` span name or the future
   type name; unnamed tasks appear as `<anonymous>`.
 
+### orders
+
+The orders service supports the same async-task profiling. Build with the
+`profiling` feature:
+
+```bash
+cargo build --release -p orders --features profiling
+```
+
+Start with console-subscriber enabled:
+
+```bash
+RENZU_PROFILING=1 ./target/release/orders &
+```
+
+Connect `tokio-console` (default listen address `127.0.0.1:6669`):
+
+```bash
+tokio-console --host 127.0.0.1 --port 6669
+```
+
+The same `t`, `w`, and `b` keys apply inside `tokio-console`.
+
 ## Repeatable profiling workload
 
 Use `renzu load-test` (F-017) to generate a consistent load profile:
@@ -159,6 +210,8 @@ traceable to a specific workload.
 
 ## Verifying profiling works
 
+### Gateway
+
 1. Start the environment: `renzu up`
 2. Build the gateway: `cargo build --release -p gateway`
 3. Start the gateway: `./target/release/gateway &`
@@ -168,5 +221,19 @@ traceable to a specific workload.
 7. Save the report: `renzu report <run-id>`
 
 Profiling is considered working when `perf report` shows gateway frames
+(e.g., `axum`, `tokio`, `reqwest`) and the experiment report contains the
+workload parameters used during capture.
+
+### orders
+
+1. Start the environment: `renzu up`
+2. Build orders with profiling: `cargo build --release -p orders`
+3. Start orders: `./target/release/orders &`
+4. Run the workload: `renzu load-test --scenario baseline --duration 30 --rate 50`
+5. Capture CPU samples in parallel: `sudo perf record -F 99 -g -- sleep 30`
+6. Inspect: `sudo perf report --stdio`
+7. Save the report: `renzu report <run-id>`
+
+Profiling is considered working when `perf report` shows orders frames
 (e.g., `axum`, `tokio`, `reqwest`) and the experiment report contains the
 workload parameters used during capture.
