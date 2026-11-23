@@ -11,6 +11,7 @@ mod compare;
 mod loadgen;
 mod report;
 mod scenarios;
+mod sli;
 pub mod telemetry;
 
 use std::path::{Path, PathBuf};
@@ -97,6 +98,17 @@ enum Command {
         left: String,
         /// Identifier of the run to compare against the baseline.
         right: String,
+    },
+    /// Check SLA compliance for a saved experiment run.
+    Sli {
+        /// Run identifier to check SLA compliance for.
+        run_id: String,
+        /// Availability target as a fraction in [0, 1] (default 0.99 = 99%).
+        #[arg(long, default_value = "0.99")]
+        availability_target: f64,
+        /// Latency target for p95 in milliseconds (default 500).
+        #[arg(long, default_value = "500")]
+        latency_target_ms: f64,
     },
 }
 
@@ -234,6 +246,11 @@ fn dispatch(command: Command) -> ExitCode {
         } => run_or_report(|| load_test(scenario, duration, rate, concurrency, url)),
         Command::Report { run_id } => run_or_report(move || report_command(run_id)),
         Command::Compare { left, right } => run_or_report(move || compare_command(left, right)),
+        Command::Sli {
+            run_id,
+            availability_target,
+            latency_target_ms,
+        } => run_or_report(move || sli_command(&run_id, availability_target, latency_target_ms)),
     }
 }
 
@@ -580,5 +597,50 @@ fn report_read_error(run_id: &str, err: std::io::Error) -> CliError {
         CliError::Orchestration(format!("unknown run id: {run_id}"))
     } else {
         CliError::Orchestration(format!("failed to read report {run_id}: {err}"))
+    }
+}
+
+/// Check SLA compliance for a saved experiment run.
+///
+/// Prints availability and latency SLI results against the configured
+/// targets. Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn sli_command(
+    run_id: &str,
+    availability_target: f64,
+    latency_target_ms: f64,
+) -> Result<ExitCode, CliError> {
+    match crate::sli::compute_sli_for_run(run_id, availability_target, latency_target_ms) {
+        Ok(sli) => {
+            println!("SLA compliance for run {}", sli.run_id);
+            println!("  total requests:    {}", sli.total_requests);
+            if sli.insufficient_data {
+                println!("  availability:      insufficient data (no requests)");
+                println!("  latency p95:       insufficient data (no requests)");
+            } else {
+                let avail_status = if sli.availability_met {
+                    "MET"
+                } else {
+                    "NOT MET"
+                };
+                let lat_status = if sli.latency_met { "MET" } else { "NOT MET" };
+                println!(
+                    "  availability:      {:.2}% (target >= {:.0}%) {}",
+                    sli.availability * 100.0,
+                    sli.availability_target * 100.0,
+                    avail_status
+                );
+                println!(
+                    "  latency p95:       {:.1} ms (target <= {:.0} ms) {}",
+                    sli.latency_p95_ms, sli.latency_target_ms, lat_status
+                );
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to read report {run_id}: {err}"
+        ))),
     }
 }
