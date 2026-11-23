@@ -480,7 +480,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -493,7 +493,7 @@ Acceptance criteria:
 - Profiling results can be inspected.
 - Tooling overhead and limitations are documented.
 
-Known limitation: No automated test verifies the profiling workflow. This feature is documentation-only; no test verifies profiling instructions work, results can be inspected, or tooling overhead is measured.
+Known limitation: Profiling is documented for both gateway and orders services in `docs/profiling.md`. No automated test verifies the profiling workflow; it remains a documentation-only feature.
 
 Dependencies: F-018.
 
@@ -518,7 +518,7 @@ Dependencies: F-018.
 ### F-021: Service-Level Indicators
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Define availability and latency SLIs.
@@ -530,6 +530,11 @@ Acceptance criteria:
 - SLI definitions are documented.
 - Calculations are covered by tests.
 - Insufficient data is distinguished from successful compliance.
+
+Implementation: SLIs are computed from saved `RunReport` files (`./reports/<run-id>.json`)
+via the `renzu sli <run-id>` CLI subcommand (`apps/renzu/src/sli.rs`). Default targets:
+availability >= 99%, latency p95 <= 500 ms, overridable with `--availability-target` and
+`--latency-target-ms`. Zero-request runs report insufficient data rather than compliance.
 
 Dependencies: F-010, F-018.
 
