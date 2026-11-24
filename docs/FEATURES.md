@@ -541,7 +541,7 @@ Dependencies: F-010, F-018.
 ### F-022: SLO and Error-Budget Reporting
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Define configurable SLO targets.
@@ -553,6 +553,12 @@ Acceptance criteria:
 - Calculations use documented definitions and time windows.
 - Error-budget results are tested.
 - Reports distinguish configured objectives from observed measurements.
+
+Implementation: SLOs are computed from saved `RunReport` files (`./reports/<run-id>.json`)
+via the `renzu slo <run-id>` CLI subcommand (`apps/renzu/src/slo.rs`). Default targets:
+availability >= 99%, latency p95 <= 500 ms, overridable with `--availability-target` and
+`--latency-target-ms`. Error budget is `target − observed` (positive = headroom,
+negative = over budget). Zero-request runs report insufficient data rather than compliance.
 
 Dependencies: F-021.
 
