@@ -10,6 +10,7 @@
 mod compare;
 mod diagnose;
 mod loadgen;
+mod overhead;
 mod profile;
 mod report;
 mod scenarios;
@@ -141,6 +142,26 @@ enum Command {
     Diagnose {
         /// Run identifier to diagnose.
         run_id: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long, default_value = "false")]
+        json: bool,
+    },
+    /// Measure resource and telemetry overhead for a load test run.
+    MeasureOverhead {
+        /// Name of the scenario to measure.
+        scenario: String,
+        /// Test duration in seconds (1-3600).
+        #[arg(long, default_value = "10")]
+        duration: u64,
+        /// Requests per second (mutually exclusive with --concurrency).
+        #[arg(long, conflicts_with = "concurrency")]
+        rate: Option<u64>,
+        /// Number of concurrent clients (mutually exclusive with --rate).
+        #[arg(long, conflicts_with = "rate")]
+        concurrency: Option<u64>,
+        /// Target URL for each request.
+        #[arg(long, default_value = "http://127.0.0.1:8080/health")]
+        url: String,
         /// Emit machine-readable JSON output.
         #[arg(long, default_value = "false")]
         json: bool,
@@ -302,6 +323,16 @@ fn dispatch(command: Command) -> ExitCode {
         Command::Diagnose { run_id, json } => {
             run_or_report(move || diagnose_command(&run_id, json))
         }
+        Command::MeasureOverhead {
+            scenario,
+            duration,
+            rate,
+            concurrency,
+            url,
+            json,
+        } => run_or_report(move || {
+            measure_overhead_command(&scenario, duration, rate, concurrency, &url, json)
+        }),
     }
 }
 
@@ -847,6 +878,60 @@ fn diagnose_command(run_id: &str, json: bool) -> Result<ExitCode, CliError> {
         }
         Err(err) => Err(CliError::Orchestration(format!(
             "failed to diagnose run {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Measure resource and telemetry overhead for a load test run.
+///
+/// Prints a human-readable table of CPU/memory deltas and throughput/error
+/// rate, or JSON with `--json`.
+fn measure_overhead_command(
+    scenario: &str,
+    duration: u64,
+    rate: Option<u64>,
+    concurrency: Option<u64>,
+    url: &str,
+    json: bool,
+) -> Result<ExitCode, CliError> {
+    match crate::overhead::measure_overhead(scenario, duration, rate, concurrency, url) {
+        Ok(result) => {
+            if json {
+                let json_str = serde_json::to_string_pretty(&result)
+                    .map_err(|e| CliError::Internal(format!("serialize overhead: {e}")))?;
+                println!("{json_str}");
+            } else {
+                println!(
+                    "Overhead measurement for scenario {} ({}s)",
+                    result.scenario, result.duration_secs
+                );
+                println!("  target:            {}", result.url);
+                if let Some(rps) = result.rate_rps {
+                    println!("  rate:              {} rps", rps);
+                }
+                if let Some(n) = result.concurrency {
+                    println!("  concurrency:       {}", n);
+                }
+                println!(
+                    "  CPU user delta:    {:.3} s",
+                    result.cpu_user_delta_seconds
+                );
+                println!(
+                    "  CPU system delta:  {:.3} s",
+                    result.cpu_system_delta_seconds
+                );
+                println!("  VmRSS delta:       {} kB", result.vm_rss_delta_kb);
+                println!(
+                    "  requests:          {} total, {} successful, {} failed",
+                    result.total_requests, result.successful, result.failed
+                );
+                println!("  throughput:        {:.1} rps", result.throughput_rps);
+                println!("  error rate:        {:.1}%", result.error_rate_percent);
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to measure overhead: {err}"
         ))),
     }
 }

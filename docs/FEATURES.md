@@ -653,7 +653,7 @@ Dependencies: F-018.
 ### F-026: Resource and Telemetry Overhead Analysis
 
 **Priority:** P2
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Measure application behavior with instrumentation enabled and disabled where practical.
@@ -665,6 +665,13 @@ Acceptance criteria:
 - Measurements document the workload and environment.
 - Results distinguish observed differences from causal conclusions.
 - Configuration changes and their effects are recorded.
+
+Implementation: `renzu measure-overhead <scenario>` measures process CPU time
+(user/system) and memory RSS before and after a load test run via `/proc`
+(Linux-only), reporting resource deltas alongside throughput and error rate.
+Output is human-readable by default with `--json` for machine parsing.
+Telemetry on/off comparison and sampling/batching evaluation are documented as
+future work requiring a service-side telemetry toggle.
 
 Dependencies: F-019, F-020.
 
