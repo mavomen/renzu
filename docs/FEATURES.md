@@ -602,7 +602,7 @@ Dependencies: F-016, F-018.
 ### F-024: Trace-to-Profile Correlation
 
 **Priority:** P2
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Investigate correlation between slow traces and profiling samples.
@@ -614,6 +614,11 @@ Acceptance criteria:
 - The correlation mechanism is technically justified.
 - Results are reproducible.
 - The feature does not claim unsupported per-span CPU attribution.
+
+Implementation: `renzu profile-correlate <run-id> --perf-script <file>` correlates
+`perf script` samples against a saved `RunReport`'s time window (`start_time` +
+`duration_secs`). Reports top-N hot functions observed during the window. Uses
+time-window overlap only; does not claim per-span CPU attribution.
 
 Dependencies: F-019, F-020.
 
