@@ -8,6 +8,7 @@
 //! compares two saved experiment reports and prints metric deltas.
 
 mod compare;
+mod diagnose;
 mod loadgen;
 mod profile;
 mod report;
@@ -135,6 +136,14 @@ enum Command {
         /// Number of top functions to report (default 10).
         #[arg(long, default_value = "10")]
         top_n: usize,
+    },
+    /// Generate diagnostic hypotheses for a saved experiment run.
+    Diagnose {
+        /// Run identifier to diagnose.
+        run_id: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long, default_value = "false")]
+        json: bool,
     },
 }
 
@@ -290,6 +299,9 @@ fn dispatch(command: Command) -> ExitCode {
         } => run_or_report(move || {
             profile_correlate_command(&run_id, &perf_script, perf_offset_seconds, top_n)
         }),
+        Command::Diagnose { run_id, json } => {
+            run_or_report(move || diagnose_command(&run_id, json))
+        }
     }
 }
 
@@ -782,6 +794,59 @@ fn profile_correlate_command(
         }
         Err(err) => Err(CliError::Orchestration(format!(
             "failed to correlate profile {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Generate diagnostic hypotheses for a saved experiment run.
+///
+/// Prints a human-readable table of hypotheses (each with kind, confidence,
+/// evidence, and uncertainty) or JSON with `--json`.
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn diagnose_command(run_id: &str, json: bool) -> Result<ExitCode, CliError> {
+    match crate::diagnose::diagnose_for_run(run_id) {
+        Ok(result) => {
+            if json {
+                let json_str = serde_json::to_string_pretty(&result)
+                    .map_err(|e| CliError::Internal(format!("serialize diagnosis: {e}")))?;
+                println!("{json_str}");
+            } else {
+                println!(
+                    "Diagnosis for run {} (scenario: {})",
+                    result.run_id, result.scenario
+                );
+                if result.insufficient_data {
+                    println!("  insufficient data: no requests recorded");
+                } else {
+                    println!("  hypotheses:");
+                    for hypothesis in &result.hypotheses {
+                        let kind_str = match hypothesis.kind {
+                            crate::diagnose::HypothesisKind::Observation => "observation",
+                            crate::diagnose::HypothesisKind::Inference => "inference",
+                        };
+                        println!(
+                            "  - [{}] {} (confidence: {}, kind: {})",
+                            hypothesis.id, hypothesis.text, hypothesis.confidence, kind_str
+                        );
+                        if !hypothesis.evidence.is_empty() {
+                            println!("      evidence:");
+                            for evidence in &hypothesis.evidence {
+                                println!("        * {evidence}");
+                            }
+                        }
+                        if let Some(uncertainty) = &hypothesis.uncertainty {
+                            println!("      uncertainty: {uncertainty}");
+                        }
+                    }
+                }
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to diagnose run {run_id}: {err}"
         ))),
     }
 }
