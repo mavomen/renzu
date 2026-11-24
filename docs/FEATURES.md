@@ -625,20 +625,28 @@ Dependencies: F-019, F-020.
 ### F-025: Explainable Incident Assistant
 
 **Priority:** P2
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Accept bounded telemetry evidence.
-- Generate diagnostic hypotheses using an optional local model.
+- Generate diagnostic hypotheses using rule-based heuristics (no model crate; model integration is future work).
 - Reference the evidence supporting each hypothesis.
 - Separate observations from inferred explanations.
-- Keep model execution optional.
+- Keep model execution optional (heuristics work without any model).
 
 Acceptance criteria:
 - The core platform works without an AI model.
 - Every generated hypothesis identifies its supporting evidence where available.
 - Missing evidence and uncertainty are explicit.
 - The assistant cannot autonomously modify the environment or remediate incidents.
+
+Implementation: `renzu diagnose <run-id>` reads the saved `RunReport`
+(`./reports/<run-id>.json`) and emits diagnostic hypotheses as observations
+and inferred explanations, each citing supporting evidence. Rule-based
+heuristics only; no model crate. Zero-request runs report insufficient data
+rather than a hypothesis. Distinguishes observations from inferences and
+never modifies the environment. Output is human-readable by default with
+`--json` for machine parsing.
 
 Dependencies: F-018.
 
