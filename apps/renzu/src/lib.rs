@@ -12,6 +12,7 @@ mod loadgen;
 mod report;
 mod scenarios;
 mod sli;
+mod slo;
 pub mod telemetry;
 
 use std::path::{Path, PathBuf};
@@ -102,6 +103,17 @@ enum Command {
     /// Check SLA compliance for a saved experiment run.
     Sli {
         /// Run identifier to check SLA compliance for.
+        run_id: String,
+        /// Availability target as a fraction in [0, 1] (default 0.99 = 99%).
+        #[arg(long, default_value = "0.99")]
+        availability_target: f64,
+        /// Latency target for p95 in milliseconds (default 500).
+        #[arg(long, default_value = "500")]
+        latency_target_ms: f64,
+    },
+    /// Check SLO compliance and error budget for a saved experiment run.
+    Slo {
+        /// Run identifier to check SLO compliance for.
         run_id: String,
         /// Availability target as a fraction in [0, 1] (default 0.99 = 99%).
         #[arg(long, default_value = "0.99")]
@@ -251,6 +263,11 @@ fn dispatch(command: Command) -> ExitCode {
             availability_target,
             latency_target_ms,
         } => run_or_report(move || sli_command(&run_id, availability_target, latency_target_ms)),
+        Command::Slo {
+            run_id,
+            availability_target,
+            latency_target_ms,
+        } => run_or_report(move || slo_command(&run_id, availability_target, latency_target_ms)),
     }
 }
 
@@ -632,6 +649,70 @@ fn sli_command(
                 println!(
                     "  latency p95:       {:.1} ms (target <= {:.0} ms) {}",
                     sli.latency_p95_ms, sli.latency_target_ms, lat_status
+                );
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to read report {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Check SLO compliance and error budget for a saved experiment run.
+///
+/// Prints availability and latency SLO results against the configured
+/// targets, including error-budget remaining (`target − observed`).
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn slo_command(
+    run_id: &str,
+    availability_target: f64,
+    latency_target_ms: f64,
+) -> Result<ExitCode, CliError> {
+    match crate::slo::compute_slo_for_run(run_id, availability_target, latency_target_ms) {
+        Ok(slo) => {
+            println!("SLO compliance for run {}", slo.run_id);
+            println!("  total requests:    {}", slo.total_requests);
+            if slo.insufficient_data {
+                println!("  availability:      insufficient data (no requests)");
+                println!("  latency p95:       insufficient data (no requests)");
+            } else {
+                let avail_status = if slo.availability_met {
+                    "MET"
+                } else {
+                    "NOT MET"
+                };
+                let lat_status = if slo.latency_met { "MET" } else { "NOT MET" };
+                println!(
+                    "  availability:      {:.2}% (target >= {:.0}%) {}",
+                    slo.availability * 100.0,
+                    slo.availability_target * 100.0,
+                    avail_status
+                );
+                println!(
+                    "  availability budget: {:+.4} ({} remaining)",
+                    slo.availability_budget_remaining,
+                    if slo.availability_budget_remaining > 0.0 {
+                        "headroom"
+                    } else {
+                        "over budget"
+                    }
+                );
+                println!(
+                    "  latency p95:       {:.1} ms (target <= {:.0} ms) {}",
+                    slo.latency_p95_ms, slo.latency_target_ms, lat_status
+                );
+                println!(
+                    "  latency budget:    {:+.1} ms ({} remaining)",
+                    slo.latency_budget_remaining,
+                    if slo.latency_budget_remaining > 0.0 {
+                        "headroom"
+                    } else {
+                        "over budget"
+                    }
                 );
             }
             Ok(ExitCode::from(0))
