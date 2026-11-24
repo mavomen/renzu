@@ -9,6 +9,7 @@
 
 mod compare;
 mod loadgen;
+mod profile;
 mod report;
 mod scenarios;
 mod sli;
@@ -121,6 +122,19 @@ enum Command {
         /// Latency target for p95 in milliseconds (default 500).
         #[arg(long, default_value = "500")]
         latency_target_ms: f64,
+    },
+    /// Correlate perf profile samples with a saved experiment run's time window.
+    ProfileCorrelate {
+        /// Run identifier to correlate profile samples for.
+        run_id: String,
+        /// Path to `perf script` output file.
+        perf_script: PathBuf,
+        /// Seconds between perf recording start and run start (default 0).
+        #[arg(long, default_value = "0")]
+        perf_offset_seconds: f64,
+        /// Number of top functions to report (default 10).
+        #[arg(long, default_value = "10")]
+        top_n: usize,
     },
 }
 
@@ -268,6 +282,14 @@ fn dispatch(command: Command) -> ExitCode {
             availability_target,
             latency_target_ms,
         } => run_or_report(move || slo_command(&run_id, availability_target, latency_target_ms)),
+        Command::ProfileCorrelate {
+            run_id,
+            perf_script,
+            perf_offset_seconds,
+            top_n,
+        } => run_or_report(move || {
+            profile_correlate_command(&run_id, &perf_script, perf_offset_seconds, top_n)
+        }),
     }
 }
 
@@ -722,6 +744,44 @@ fn slo_command(
         }
         Err(err) => Err(CliError::Orchestration(format!(
             "failed to read report {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Correlate perf profile samples with a saved experiment run's time window.
+///
+/// Prints a table of top functions observed during the run's
+/// `start_time` + `duration_secs` window.
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn profile_correlate_command(
+    run_id: &str,
+    perf_script_path: &PathBuf,
+    offset_seconds: f64,
+    top_n: usize,
+) -> Result<ExitCode, CliError> {
+    match crate::profile::correlate_profile_for_run(run_id, perf_script_path, offset_seconds, top_n)
+    {
+        Ok(result) => {
+            println!(
+                "Profile correlation for run {} ({}s)",
+                result.run_id, result.duration_secs
+            );
+            println!("  samples in window: {}", result.samples_in_window);
+            if result.top_functions.is_empty() {
+                println!("  top functions:     none observed in window");
+            } else {
+                println!("  top functions:");
+                for (function, count) in &result.top_functions {
+                    println!("    {:<40} {}", function, count);
+                }
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to correlate profile {run_id}: {err}"
         ))),
     }
 }
