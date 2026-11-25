@@ -17,6 +17,29 @@ contains eight services:
 All published ports are bound to `127.0.0.1` only (PRD NFR-04).
 Image tags are pinned explicitly (no `:latest`) (PRD NFR-01).
 
+## Credentials and opt-in configuration
+
+### Grafana admin credentials
+
+Grafana admin credentials are configurable via environment variables:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `GF_SECURITY_ADMIN_USER` | `admin` | Local-only default (PRD NFR-04). **Must be overridden in shared environments.** |
+| `GF_SECURITY_ADMIN_PASSWORD` | `admin` | Local-only default (PRD NFR-04). **Must be overridden in shared environments.** |
+
+Override at startup:
+
+```bash
+GF_SECURITY_ADMIN_USER=myadmin GF_SECURITY_ADMIN_PASSWORD=secret docker compose up -d
+```
+
+### PostgreSQL host port publication
+
+PostgreSQL port 5432 is published to `127.0.0.1:5432` by default for local development convenience. This is bound to loopback only (PRD NFR-04).
+
+For shared or production-like environments, disable host port publication by removing the `ports` block from the `postgres` service in `compose.yaml` (or via a Compose override file). Inter-service communication uses Docker network DNS (`postgres:5432`) and is unaffected.
+
 ## Prerequisites
 
 - Docker Engine and Docker Compose (Compose V2, `docker compose`).
@@ -57,7 +80,7 @@ All published ports are bound to `127.0.0.1` only (PRD NFR-04).
 | Prometheus | 127.0.0.1:9090 | 9090 | Prometheus query UI + API |
 | Loki | 127.0.0.1:3100 | 3100 | Loki HTTP API |
 | Grafana | 127.0.0.1:3000 | 3000 | Grafana UI |
-| PostgreSQL | 127.0.0.1:5432 | 5432 | PostgreSQL |
+| PostgreSQL | 127.0.0.1:5432 | 5432 | PostgreSQL (local dev only; disable for shared envs) |
 | Orders | 127.0.0.1:8081 | 8081 | Orders HTTP API |
 | Gateway | 127.0.0.1:8080 | 8080 | Gateway HTTP API |
 
@@ -141,7 +164,7 @@ curl -X POST http://127.0.0.1:4318/v1/traces \
   -d '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoke-test"}}]},"spans":[{"traceId":"0123456789abcdef0123456789abcdef","spanId":"0123456789abcdef","name":"smoke-span","kind":1,"startTimeUnixNano":"1000","endTimeUnixNano":"2000","status":{"code":1}}]}]}'
 ```
 
-Then open Grafana at http://127.0.0.1:3000 (admin/admin), navigate to the
+Then open Grafana at http://127.0.0.1:3000 (login with `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`, default `admin/admin`), navigate to the
 Tempo data source, and query service `smoke-test`.
 
 ## Trace Visualization (Tempo + Grafana)
@@ -149,7 +172,7 @@ Tempo data source, and query service `smoke-test`.
 Once the gateway has been exercised against the Collector (for example via
 `scripts/e2e-trace-visualization.sh`), traces are queryable in Grafana:
 
-1. Open http://127.0.0.1:3000 in a browser (login: admin/admin).
+1. Open http://127.0.0.1:3000 in a browser (login with `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`, default `admin/admin`).
 2. From the "Explore" view, select the Tempo data source.
 3. From the "Service" dropdown, select `gateway`.
 4. Click "Run query".

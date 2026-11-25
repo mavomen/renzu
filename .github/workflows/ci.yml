@@ -44,8 +44,8 @@ jobs:
 
       - name: Wait for services to be healthy
         run: |
-          for i in $(seq 1 30); do
-            if docker compose ps | grep -q "healthy" && ! docker compose ps | grep -Eq "unhealthy|starting"; then
+          for i in $(seq 1 60); do
+            if docker compose ps --format json | jq -r '.State' | grep -q "healthy" && ! docker compose ps --format json | jq -r '.State' | grep -Eq "unhealthy|starting"; then
               echo "services healthy"
               exit 0
             fi
@@ -55,9 +55,12 @@ jobs:
           docker compose ps >&2
           exit 1
 
+      - name: Run infrastructure verification
+        run: ./scripts/verify-infrastructure.sh
+
       - name: Run trace visualization E2E
         run: ./scripts/e2e-trace-visualization.sh
 
       - name: Stop local infrastructure
-        run: docker compose down
+        run: docker compose down -v
         if: always()

@@ -1675,6 +1675,7 @@ name = "orders"
 version = "0.0.0"
 dependencies = [
  "axum 0.7.9",
+ "console-subscriber",
  "hex",
  "http-body-util",
  "hyper 1.12.0",

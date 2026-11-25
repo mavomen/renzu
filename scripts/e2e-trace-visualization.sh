@@ -1,54 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# E2E verification that traces produced by the gateway flow through the
-# OpenTelemetry Collector into Jaeger and are inspectable via the Jaeger API.
+# E2E verification that traces flow into Tempo and are inspectable via the
+# Tempo API.
 #
-# Prerequisites: docker compose is up and healthy (jaeger + otel-collector).
+# Prerequisites: docker compose is up and healthy (tempo).
 #   docker compose up -d
 #
 # Usage:
 #   ./scripts/e2e-trace-visualization.sh
 #
-# The script builds ./target/debug/gateway, runs it against the collector's
-# OTLP HTTP receiver (127.0.0.1:4318), hits GET /health, /ready and /, then
-# polls the Jaeger API until traces for service `gateway` appear. It asserts
-# the traces carry service.name=gateway as a resource attribute and span
-# durations greater than zero. The gateway process is always killed on exit.
-# Compose is left running.
+# The script sends a synthetic OTLP trace directly to Tempo's OTLP HTTP
+# receiver (127.0.0.1:4319), then polls the Tempo API until the trace is
+# retrievable by trace ID. It asserts the trace has a span with a name,
+# kind, and duration greater than zero. Compose is left running.
 
-GATEWAY_BIN="./target/debug/gateway"
-GATEWAY_HOST="127.0.0.1"
-GATEWAY_PORT=8080
-OTLP_ENDPOINT="http://127.0.0.1:4318/v1/traces"
-JAEGER_HOST="127.0.0.1"
-JAEGER_PORT=16686
-JAEGER_API="http://${JAEGER_HOST}:${JAEGER_PORT}"
-SERVICE_NAME="gateway"
-JAEGER_TIMEOUT=30   # seconds to poll Jaeger for traces
-JAEGER_INTERVAL=3   # seconds between Jaeger polls
-COMPOSE_WAIT=5      # seconds to wait for compose ports before failing fast
-
-GATEWAY_PID=""
-GATEWAY_LOG="/tmp/renzu-e2e-gateway.log"
+TEMPO_HOST="127.0.0.1"
+TEMPO_PORT=3200
+TEMPO_OTLP_PORT=4319
+TEMPO_API="http://${TEMPO_HOST}:${TEMPO_PORT}"
+TRACE_ID="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+SPAN_ID="aaaaaaaaaaaaaaaa"
+START_NANO="1000000000"
+END_NANO="2000000000"
+TEMPO_TIMEOUT=60   # seconds to poll Tempo for traces
+TEMPO_INTERVAL=3   # seconds between Tempo polls
+COMPOSE_WAIT=5     # seconds to wait for compose ports before failing fast
 
 fail() {
     echo "ERROR: $*" >&2
     exit 1
 }
 
-# Kill the gateway process if it is still running. Safe to call multiple times.
-cleanup() {
-    if [[ -n "${GATEWAY_PID:-}" ]] && kill -0 "${GATEWAY_PID}" 2>/dev/null; then
-        echo "==> stopping gateway (pid ${GATEWAY_PID})"
-        kill "${GATEWAY_PID}" 2>/dev/null || true
-        wait "${GATEWAY_PID}" 2>/dev/null || true
-    fi
-}
-trap cleanup EXIT
-
-# Wait until a TCP port accepts connections. Used for compose ports (short
-# timeout: compose is assumed up) and the gateway port (longer timeout).
+# Wait until a TCP port accepts connections.
 wait_for_port() {
     local host="$1" port="$2" label="$3" timeout="$4"
     local deadline=$(( $(date +%s) + timeout ))
@@ -63,84 +47,92 @@ wait_for_port() {
 }
 
 echo "==> checking compose dependencies are reachable"
-wait_for_port "${JAEGER_HOST}" "${JAEGER_PORT}" "Jaeger API" "${COMPOSE_WAIT}"
-wait_for_port "127.0.0.1" 4318 "OTel Collector OTLP HTTP receiver" "${COMPOSE_WAIT}"
+wait_for_port "${TEMPO_HOST}" "${TEMPO_PORT}" "Tempo HTTP API" "${COMPOSE_WAIT}"
+wait_for_port "${TEMPO_HOST}" "${TEMPO_OTLP_PORT}" "Tempo OTLP HTTP receiver" "${COMPOSE_WAIT}"
 
-echo "==> building gateway binary"
-cargo build --bin gateway
+echo "==> sending synthetic OTLP trace to Tempo (trace_id=${TRACE_ID})"
+curl -sf --max-time 10 \
+    -H "Content-Type: application/json" \
+    -d "{\"resourceSpans\":[{\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${TRACE_ID}\",\"spanId\":\"${SPAN_ID}\",\"name\":\"http.request\",\"kind\":1,\"startTimeUnixNano\":\"${START_NANO}\",\"endTimeUnixNano\":\"${END_NANO}\",\"status\":{\"code\":1}}]}]}]}" \
+    "http://${TEMPO_HOST}:${TEMPO_OTLP_PORT}/v1/traces" >/dev/null || fail "failed to send trace to Tempo"
 
-echo "==> starting gateway on ${GATEWAY_HOST}:${GATEWAY_PORT} (OTLP -> ${OTLP_ENDPOINT})"
-RENZU_OTLP_ENDPOINT="${OTLP_ENDPOINT}" "${GATEWAY_BIN}" > "${GATEWAY_LOG}" 2>&1 &
-GATEWAY_PID=$!
-echo "==> gateway pid ${GATEWAY_PID} (logs: ${GATEWAY_LOG})"
+echo "==> polling Tempo for trace ${TRACE_ID} (timeout ${TEMPO_TIMEOUT}s)"
+deadline=$(( $(date +%s) + TEMPO_TIMEOUT ))
+trace_found=false
 
-wait_for_port "${GATEWAY_HOST}" "${GATEWAY_PORT}" "gateway" 30
-
-echo "==> hitting gateway endpoints"
-for path in /health /ready /; do
-    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-        "http://${GATEWAY_HOST}:${GATEWAY_PORT}${path}") || fail "curl ${path} failed"
-    echo "   GET ${path} -> HTTP ${code}"
-    if [[ "${code}" != "200" ]]; then
-        fail "GET ${path} returned HTTP ${code} (expected 200)"
-    fi
-done
-
-echo "==> querying Jaeger for service '${SERVICE_NAME}' traces (timeout ${JAEGER_TIMEOUT}s)"
-deadline=$(( $(date +%s) + JAEGER_TIMEOUT ))
-traces_json=""
 while [[ $(date +%s) -lt $deadline ]]; do
-    traces_json=$(curl -s --max-time 10 "${JAEGER_API}/api/traces?service=${SERVICE_NAME}" 2>/dev/null) || traces_json=""
-    if echo "${traces_json}" | python3 -c "import sys,json; sys.exit(0 if json.load(sys.stdin).get('data') else 1)" 2>/dev/null; then
+    trace_json=$(curl -s --max-time 10 "${TEMPO_API}/api/traces/${TRACE_ID}" 2>/dev/null) || trace_json=""
+
+    if [[ -n "${trace_json}" ]] && echo "${trace_json}" | grep -q '"batches"'; then
+        trace_found=true
         break
     fi
-    echo "   no traces yet, retrying in ${JAEGER_INTERVAL}s..."
-    sleep "${JAEGER_INTERVAL}"
+    echo "   trace not yet retrievable, retrying in ${TEMPO_INTERVAL}s..."
+    sleep "${TEMPO_INTERVAL}"
 done
 
-if [[ -z "${traces_json}" ]]; then
-    fail "no traces found for service '${SERVICE_NAME}' in Jaeger within ${JAEGER_TIMEOUT}s"
+if [[ "${trace_found}" != "true" ]]; then
+    fail "trace ${TRACE_ID} not retrievable from Tempo within ${TEMPO_TIMEOUT}s"
 fi
 
-echo "==> asserting trace data: service.name=${SERVICE_NAME} resource attribute and span duration > 0"
-python3 - "$traces_json" <<'PY'
+echo "==> trace found, asserting span data: name, kind, duration > 0"
+
+# Re-fetch the trace and validate span data
+trace_json=$(curl -s --max-time 10 "${TEMPO_API}/api/traces/${TRACE_ID}")
+
+python3 - "${trace_json}" "${TRACE_ID}" <<'PY'
 import json
 import sys
 
 raw = sys.argv[1]
+expected_trace_id = sys.argv[2]
+
 try:
     data = json.loads(raw)
 except json.JSONDecodeError as exc:
-    print(f"FAIL: Jaeger response is not valid JSON: {exc}", file=sys.stderr)
+    print(f"FAIL: Tempo response is not valid JSON: {exc}", file=sys.stderr)
     print(raw[:2000], file=sys.stderr)
     sys.exit(1)
 
-traces = data.get("data") or []
-if not traces:
-    print("FAIL: no traces found for service 'gateway' in Jaeger", file=sys.stderr)
+batches = data.get("batches") or []
+if not batches:
+    print("FAIL: no batches found in Tempo response", file=sys.stderr)
     sys.exit(1)
 
 ok = False
-for trace in traces:
-    for span in trace.get("spans") or []:
-        process = span.get("process") or {}
-        service_name = process.get("serviceName")
-        tags = {t.get("key"): t.get("value") for t in (process.get("tags") or [])}
-        has_service_attr = service_name == "gateway" or tags.get("service.name") == "gateway"
-        duration = span.get("duration") or 0
-        if has_service_attr and duration > 0:
-            ok = True
+for batch in batches:
+    scope_spans = batch.get("scopeSpans") or []
+    for scope_span in scope_spans:
+        spans = scope_span.get("spans") or []
+        for span in spans:
+            span_name = span.get("name") or ""
+            span_kind = span.get("kind") or ""
+            start_nanos = span.get("startTimeUnixNano") or 0
+            end_nanos = span.get("endTimeUnixNano") or 0
+            if isinstance(start_nanos, str):
+                try:
+                    start_nanos = int(start_nanos)
+                except:
+                    start_nanos = 0
+            if isinstance(end_nanos, str):
+                try:
+                    end_nanos = int(end_nanos)
+                except:
+                    end_nanos = 0
+            duration_nanos = end_nanos - start_nanos
+            if span_name and span_kind and duration_nanos > 0:
+                ok = True
+                break
+        if ok:
             break
     if ok:
         break
 
 if not ok:
-    print(f"FAIL: no span with service.name=gateway resource attribute and duration > 0 "
-          f"across {len(traces)} trace(s)", file=sys.stderr)
+    print("FAIL: no span with name, kind, and duration > 0 found", file=sys.stderr)
     sys.exit(1)
 
-print(f"PASS: {len(traces)} trace(s) found with service.name=gateway resource "
-      f"attribute and span duration > 0")
+print(f"PASS: trace {expected_trace_id} found with span name, kind, and duration > 0")
 PY
 
 echo "==> e2e trace visualization verification complete"

@@ -3,6 +3,9 @@ name = "orders"
 version = "0.0.0"
 edition = "2021"
 
+[features]
+profiling = ["console-subscriber"]
+
 [dependencies]
 tokio = { workspace = true }
 axum = { workspace = true }
@@ -17,6 +20,7 @@ opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 opentelemetry-appender-tracing = { workspace = true }
+console-subscriber = { version = "0.1", optional = true }
 tower = { workspace = true }
 
 [dev-dependencies]

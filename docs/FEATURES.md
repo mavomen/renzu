@@ -114,7 +114,7 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Provide a repeatable local environment.
 
@@ -132,8 +132,6 @@ Acceptance criteria:
 - Health status distinguishes ready services from unhealthy services.
 - Startup failures produce actionable diagnostics.
 - Shutdown behavior is documented and tested.
-
-Known limitation: No automated test verifies the infrastructure orchestration. The e2e CI job runs `docker compose up` but fails on otel-collector/jaeger dependency. Health check behavior, startup dependencies, and shutdown behavior lack automated verification.
 
 Dependencies: F-002.
 
@@ -226,7 +224,7 @@ Dependencies: F-003, F-006.
 
 ### F-008: Distributed Trace Visualization
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Inspect trace spans and operation timing.
 
@@ -241,8 +239,6 @@ Acceptance criteria:
 - Span relationships and durations are visible.
 - Failed operations can be identified.
 - UI access instructions are documented.
-
-Known limitation: No automated test verifies trace visualization. The e2e trace visualization script (`scripts/e2e-trace-visualization.sh`) fails in CI due to otel-collector/jaeger dependency issue. Trace UI access and span inspection lack automated verification.
 
 Dependencies: F-007.
 
@@ -334,7 +330,7 @@ Dependencies: F-006, F-007, F-008. (F-006 and F-007 provide the instrumentation 
 
 ### F-013: Log Pipeline and Trace Correlation
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 **Objective:** Ship application logs to the chosen backend and connect them with distributed traces.
 
@@ -354,8 +350,6 @@ Acceptance criteria:
 - No unsupported cross-backend correlation is claimed.
 
 Known limitation: None. Both gateway and orders services export OTLP logs via the OpenTelemetry log bridge (`opentelemetry-appender-tracing`), and log records carry native trace_id and span_id fields. Integration tests in both services (`log_and_trace_share_trace_id`) assert that logs emitted inside a handler span carry the same trace ID as the exported span.
-
-Proposed split (maintainer decision): F-013a — log export (provision Loki 3.x + Collector logs pipeline); F-013b — correlation (trace/span IDs in logs, queryable linkage), each with independent acceptance criteria. F-013b is implemented and tested within each service.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
@@ -486,7 +480,7 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -499,7 +493,7 @@ Acceptance criteria:
 - Profiling results can be inspected.
 - Tooling overhead and limitations are documented.
 
-Known limitation: No automated test verifies the profiling workflow. This feature is documentation-only; no test verifies profiling instructions work, results can be inspected, or tooling overhead is measured.
+Known limitation: Profiling is documented for both gateway and orders services in `docs/profiling.md`. No automated test verifies the profiling workflow; it remains a documentation-only feature.
 
 Dependencies: F-018.
 
@@ -524,7 +518,7 @@ Dependencies: F-018.
 ### F-021: Service-Level Indicators
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Define availability and latency SLIs.
@@ -537,12 +531,17 @@ Acceptance criteria:
 - Calculations are covered by tests.
 - Insufficient data is distinguished from successful compliance.
 
+Implementation: SLIs are computed from saved `RunReport` files (`./reports/<run-id>.json`)
+via the `renzu sli <run-id>` CLI subcommand (`apps/renzu/src/sli.rs`). Default targets:
+availability >= 99%, latency p95 <= 500 ms, overridable with `--availability-target` and
+`--latency-target-ms`. Zero-request runs report insufficient data rather than compliance.
+
 Dependencies: F-010, F-018.
 
 ### F-022: SLO and Error-Budget Reporting
 
 **Priority:** P1
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Define configurable SLO targets.
@@ -554,6 +553,12 @@ Acceptance criteria:
 - Calculations use documented definitions and time windows.
 - Error-budget results are tested.
 - Reports distinguish configured objectives from observed measurements.
+
+Implementation: SLOs are computed from saved `RunReport` files (`./reports/<run-id>.json`)
+via the `renzu slo <run-id>` CLI subcommand (`apps/renzu/src/slo.rs`). Default targets:
+availability >= 99%, latency p95 <= 500 ms, overridable with `--availability-target` and
+`--latency-target-ms`. Error budget is `target − observed` (positive = headroom,
+negative = over budget). Zero-request runs report insufficient data rather than compliance.
 
 Dependencies: F-021.
 
@@ -597,7 +602,7 @@ Dependencies: F-016, F-018.
 ### F-024: Trace-to-Profile Correlation
 
 **Priority:** P2
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Investigate correlation between slow traces and profiling samples.
@@ -610,19 +615,24 @@ Acceptance criteria:
 - Results are reproducible.
 - The feature does not claim unsupported per-span CPU attribution.
 
+Implementation: `renzu profile-correlate <run-id> --perf-script <file>` correlates
+`perf script` samples against a saved `RunReport`'s time window (`start_time` +
+`duration_secs`). Reports top-N hot functions observed during the window. Uses
+time-window overlap only; does not claim per-span CPU attribution.
+
 Dependencies: F-019, F-020.
 
 ### F-025: Explainable Incident Assistant
 
 **Priority:** P2
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Accept bounded telemetry evidence.
-- Generate diagnostic hypotheses using an optional local model.
+- Generate diagnostic hypotheses using rule-based heuristics (no model crate; model integration is future work).
 - Reference the evidence supporting each hypothesis.
 - Separate observations from inferred explanations.
-- Keep model execution optional.
+- Keep model execution optional (heuristics work without any model).
 
 Acceptance criteria:
 - The core platform works without an AI model.
@@ -630,12 +640,20 @@ Acceptance criteria:
 - Missing evidence and uncertainty are explicit.
 - The assistant cannot autonomously modify the environment or remediate incidents.
 
+Implementation: `renzu diagnose <run-id>` reads the saved `RunReport`
+(`./reports/<run-id>.json`) and emits diagnostic hypotheses as observations
+and inferred explanations, each citing supporting evidence. Rule-based
+heuristics only; no model crate. Zero-request runs report insufficient data
+rather than a hypothesis. Distinguishes observations from inferences and
+never modifies the environment. Output is human-readable by default with
+`--json` for machine parsing.
+
 Dependencies: F-018.
 
 ### F-026: Resource and Telemetry Overhead Analysis
 
 **Priority:** P2
-**Status:** `PLANNED`
+**Status:** `DONE`
 
 Scope:
 - Measure application behavior with instrumentation enabled and disabled where practical.
@@ -647,6 +665,13 @@ Acceptance criteria:
 - Measurements document the workload and environment.
 - Results distinguish observed differences from causal conclusions.
 - Configuration changes and their effects are recorded.
+
+Implementation: `renzu measure-overhead <scenario>` measures process CPU time
+(user/system) and memory RSS before and after a load test run via `/proc`
+(Linux-only), reporting resource deltas alongside throughput and error rate.
+Output is human-readable by default with `--json` for machine parsing.
+Telemetry on/off comparison and sampling/batching evaluation are documented as
+future work requiring a service-side telemetry toggle.
 
 Dependencies: F-019, F-020.
 

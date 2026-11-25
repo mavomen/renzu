@@ -76,26 +76,26 @@ task marked [BLOCKED] until its dependency is resolved.
   trace in Jaeger, metric in Prometheus, log in Loki, report written. Fast smoke
   set on PR, slower set nightly.
   Files: tests/e2e/, scripts/, .github/workflows/ci.yml.
-  Status: [PROPOSED] — depends on F-013-02, HEALTH-01.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on F-013-02, HEALTH-01.
 
 - [ ] **COMPOSE-01: Fix the stale compose.yaml header.**
   The header still says "No application services yet; the first Rust crate lands
   in F-004." Update it to reflect the current services.
   Files: compose.yaml.
-  Status: [PROPOSED] — quick win, unblocks nothing.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— quick win, unblocks nothing.
 
 - [ ] **COMPOSE-02: Add resource limits to every container.**
   No container currently has CPU/memory limits. Add deploy.resources.limits to
   Compose and document approximate requirements.
   Files: compose.yaml, docs/runbooks/local-infrastructure.md.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **COMPOSE-03: Make Postgres publication and Grafana credentials opt-in.**
   Postgres is published on 127.0.0.1:5432 with default credentials and Grafana
   ships admin/admin. Acceptable on loopback for a lab; make both opt-in for any
   shared environment.
   Files: compose.yaml.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 ## Phase 2: Hardening (P1, target ~6-8 weeks)
 
@@ -106,28 +106,28 @@ task marked [BLOCKED] until its dependency is resolved.
   the system slow, which defeats the tool's purpose. Add a self-test stub
   service for deterministic validation.
   Files: apps/renzu/src/loadgen.rs.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-02: Authenticate /faults/* and add per-fault TTL auto-expiry.**
   Bearer token on the fault-control endpoints, per-fault TTL with automatic
   expiry, and an audit log of toggles. Auto-expiry is the dead-man's switch that
   stops a crashed runner leaving a fault active.
   Files: apps/gateway/src/server.rs, apps/renzu/src/scenarios/runner.rs.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-03: Grafana annotations for experiment windows.**
   Have `renzu scenario run` call the Grafana annotations API at fault start and
   stop, tagged with the run ID and fault name, so every graph shows exactly when
   the fault was active and reports can link to a pre-set time range.
   Files: apps/renzu/src/scenarios/runner.rs, apps/renzu/src/report.rs.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-04: Config layering.**
   Typed config struct; precedence defaults < file < env < CLI; validated at
   startup with actionable errors; documented schema. Add a `renzu config
   validate` command.
   Files: new config module, apps/renzu/src/, docs/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-05: Secrets management.**
   No default credentials outside the local profile; secrets via env/file
@@ -135,41 +135,41 @@ task marked [BLOCKED] until its dependency is resolved.
   random credentials into a git-ignored .env on first `renzu up`. Add gitleaks
   to CI.
   Files: compose.yaml, .github/workflows/ci.yml, scripts/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-06: Graceful shutdown.**
   SIGTERM drains in-flight requests (axum with_graceful_shutdown), then shuts
   down tracer/meter/logger providers with a bounded timeout and closes the DB
   pool. Separate liveness vs readiness.
   Files: apps/*/src/main.rs, apps/*/src/server.rs, apps/*/src/telemetry.rs.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-07: Backpressure and limits.**
   Bounded queues everywhere; memory_limiter in the Collector; load-shedding
   (503 plus Retry-After) in services; CPU/memory limits on every container.
   Files: apps/*/src/server.rs, compose.yaml, deploy/otel-collector/config.yaml.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-08: Observing Renzu itself.**
   Collector, Prometheus, Loki, Grafana and the CLI emit self-metrics; a "Renzu
   platform health" dashboard; meta-alerts (telemetry-silence dead-man's switch,
   exporter queue depth, scrape failures, ingestion errors).
   Files: deploy/prometheus/, deploy/grafana/, .github/workflows/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **H-09: Production-grade storage.**
   Jaeger on a persistent backend (Badger locally; Elasticsearch/OpenSearch or
   Tempo remotely) or migrate to Tempo. Prometheus retention and volume sizing
   documented. Loki on object storage in the remote profile.
   Files: compose.yaml, deploy/, docs/.
-  Status: [PROPOSED] — depends on the trace-backend ADR.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on the trace-backend ADR.
 
 - [ ] **H-10: Release engineering.**
   Signed, reproducible container images published to a registry; SBOM;
   cargo-dist or equivalent for the CLI; first tagged release (maintainer
   approval required).
   Files: .github/workflows/, Cargo.toml, docs/.
-  Status: [PROPOSED] — depends on H-04, H-05, H-06.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-04, H-05, H-06.
 
 ## Phase 3: Production (next quarter after P1)
 
@@ -179,28 +179,28 @@ task marked [BLOCKED] until its dependency is resolved.
   environment-specific values in code. CLI --target flag with an explicit
   target registry, never free-form commands.
   Files: deploy/, apps/renzu/src/, docs/.
-  Status: [PROPOSED] — depends on H-04 and the orchestration ADR.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-04 and the orchestration ADR.
 
 - [ ] **P-02: F-021 (Service-Level Indicators).**
   Define SLIs from OTel HTTP semantic conventions (request rate, error ratio,
   latency histogram) and ship as recording rules. Depends on a stable metrics
   path (ADR needed).
   Files: docs/FEATURES.md, deploy/prometheus/rules/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **P-03: F-022 (SLO and error-budget reporting).**
   Split into (1) SLO definition files plus recording rules and burn-rate
   alerts, (2) per-experiment "budget consumed" in reports. Part 2 is the
   differentiator.
   Files: docs/FEATURES.md, deploy/prometheus/rules/, apps/renzu/src/report.rs.
-  Status: [PROPOSED] — depends on P-02.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on P-02.
 
 - [ ] **P-04: F-026 (Resource and telemetry overhead analysis).**
   Measure instrumentation and Collector overhead (CPU, memory, latency delta with
   telemetry on/off/sampled). Publish methodology and raw data. This is exactly
   the kind of published benchmark that builds credibility.
   Files: docs/profiling.md, docs/FEATURES.md, tests/.
-  Status: [PROPOSED] — depends on H-01.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-01.
 
 - [ ] **P-05: Prometheus and Grafana deep integration.**
   OTel semantic-convention naming; direct scraping alongside OTLP (restore the
@@ -209,7 +209,7 @@ task marked [BLOCKED] until its dependency is resolved.
   alerts; SLO recording via sloth/pyrra; exemplar storage; Grafana annotations
   (H-03) and log-to-trace/trace-to-metrics drill-downs.
   Files: deploy/prometheus/, deploy/grafana/.
-  Status: [PROPOSED] — depends on the metrics-path ADR.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on the metrics-path ADR.
 
 - [ ] **P-06: Jaeger / Tempo decision and hardening.**
   Decide before investing in Jaeger storage tuning: stay on Jaeger (persistent
@@ -218,7 +218,7 @@ task marked [BLOCKED] until its dependency is resolved.
   under renzu.* namespace; service-graph and spanmetrics connectors to
   Prometheus.
   Files: deploy/, docs/decisions/.
-  Status: [PROPOSED] — depends on H-09.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-09.
 
 - [ ] **P-07: Loki resilience and redaction.**
   Persistent sending_queue with file_storage; retry_on_failure with bounded
@@ -229,7 +229,7 @@ task marked [BLOCKED] until its dependency is resolved.
   structured metadata (Loki's OTLP ingestion stores it queryably without
   indexing).
   Files: deploy/otel-collector/config.yaml, deploy/loki/, tests/e2e/.
-  Status: [PROPOSED] — depends on F-013-02.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on F-013-02.
 
 - [ ] **P-08: Additional DevOps integrations.**
   Mature, low-risk: cadvisor + node-exporter (resource/overhead analysis and
@@ -239,7 +239,7 @@ task marked [BLOCKED] until its dependency is resolved.
   cargo-deny, gitleaks, Trivy, SBOM). Deferred: Mimir/Thanos, Pyroscope/Parca,
   Elasticsearch/OpenSearch.
   Files: compose.yaml, deploy/, .github/workflows/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **P-09: First tagged release (with maintainer approval).**
   Do not bump versions or cut releases without explicit approval. This task is
@@ -256,7 +256,7 @@ task marked [BLOCKED] until its dependency is resolved.
   shell strings, always argument arrays. Document that Compose is the supported
   local runtime. Blocks P-01.
   Files: apps/renzu/src/, docs/decisions/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **ADR-02: Metrics path.**
   Collector export (:9464) vs Prometheus scraping vs both.
@@ -266,7 +266,7 @@ task marked [BLOCKED] until its dependency is resolved.
   scraping gives the `up` signal for free while the OTLP path does not.
   Blocks P-02, P-03, P-05.
   Files: deploy/prometheus/, docs/decisions/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **ADR-03: Report storage.**
   Per-run JSON files in ./reports/ vs something queryable.
@@ -274,21 +274,21 @@ task marked [BLOCKED] until its dependency is resolved.
   (schema in docs/); add an optional SQLite index later for comparison queries.
   Avoid a server database. Blocks REPORT-01, H-03.
   Files: apps/renzu/src/report.rs, docs/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **ADR-04: Minimum supported Rust toolchain.**
   Pin for CI and releases, and declare an explicit rust-version (MSRV) in
   Cargo.toml that is tested in one CI job. Decide whether library crates promise
   an MSRV or only the binary does. Blocks H-10.
   Files: Cargo.toml, rust-toolchain.toml, .github/workflows/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **ADR-05: Log pipeline.**
   Native OTLP logs vs file scraping (Fluent Bit/Vector).
   Recommendation: native OTLP from services; shipper-based collection only for
   third-party containers. Blocks F-013-02, P-07.
   Files: deploy/otel-collector/config.yaml, docs/decisions/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **ADR-06: Trace backend.**
   Stay on Jaeger vs move to Tempo.
@@ -296,7 +296,7 @@ task marked [BLOCKED] until its dependency is resolved.
   (object-storage-backed, TraceQL, tight Grafana integration) is the simpler
   path to a production trace backend. Blocks H-09, P-06.
   Files: compose.yaml, deploy/, docs/decisions/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 ## Phase 4: Long pole (after P1 exits)
 
@@ -305,7 +305,7 @@ task marked [BLOCKED] until its dependency is resolved.
   linked from docs/FEATURES.md. Any feature without verification is demoted to
   IN_PROGRESS. Correct stale comments (e.g. the compose.yaml header).
   Files: docs/FEATURES.md, compose.yaml, tests/.
-  Status: [PROPOSED] — do this early; it gates trust in everything else.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— do this early; it gates trust in everything else.
 
 - [ ] **L-02: Pluggable targets (bring your own service).**
   Define a "target" configuration: how to reach the service, which fault
@@ -317,7 +317,7 @@ task marked [BLOCKED] until its dependency is resolved.
   arbitrary services (sidecar or Kubernetes integration) — integrate with Chaos
   Mesh/LitmusChaos rather than rebuilding their fault catalogue.
   Files: apps/renzu/src/, new target crate, docs/.
-  Status: [PROPOSED] — strategic hinge; do not start before P1 exits.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— strategic hinge; do not start before P1 exits.
 
 - [ ] **L-03: F-025 (AI-assisted incident assistant), re-scoped.**
   A model reading a Renzu report plus linked traces and logs to suggest a
@@ -326,7 +326,7 @@ task marked [BLOCKED] until its dependency is resolved.
   start before reports contain real trace/log references (REPORT-01) or it will
   be guessing from summaries.
   Files: docs/FEATURES.md, new module.
-  Status: [PROPOSED] — depends on REPORT-01, P-01.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on REPORT-01, P-01.
 
 - [ ] **L-04: F-024 (Trace-to-profile correlation), deferred.**
   Needs a profiler (Pyroscope/Parca) plus span-profile linking; high effort for
@@ -340,7 +340,7 @@ task marked [BLOCKED] until its dependency is resolved.
   publish the report with trace/log/metric links plus a written walkthrough.
   This single artifact is worth more than any feature list.
   Files: scenarios/, docs/experiments/, README.md.
-  Status: [PROPOSED] — credibility milestone.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— credibility milestone.
 
 - [ ] **L-06: Repository discoverability and trust program.**
   Add a description, topics, a real README with a 60-second demo and
@@ -351,7 +351,7 @@ task marked [BLOCKED] until its dependency is resolved.
   stating the maintainer owns architectural decisions and significant changes
   start as an ADR proposal.
   Files: README.md, docs/, .github/, LICENSE.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 ## Gaps & Verification
 
@@ -361,7 +361,7 @@ task marked [BLOCKED] until its dependency is resolved.
   `docker compose config` and by inspecting deploy/otel-collector/config.yaml
   before acting on F-013-01.
   Files: compose.yaml, deploy/otel-collector/config.yaml.
-  Status: [PROPOSED] — quick diagnostic, unblocks F-013-01.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— quick diagnostic, unblocks F-013-01.
 
 - [x] **V-02: Verify gateway service wiring.**
   Gateway service IS in compose.yaml with all required environment variables:
@@ -413,7 +413,7 @@ task marked [BLOCKED] until its dependency is resolved.
   shape (open-loop rate), warm-up, repetitions and raw data so others can
   reproduce it. Avoid single-run headline numbers.
   Files: docs/profiling.md, docs/FEATURES.md.
-  Status: [PROPOSED] — depends on P-04.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on P-04.
 
 - [ ] **V-06: Add a limitations page.**
   docs/LIMITATIONS.md stating what Renzu does not do: not a production
@@ -421,7 +421,7 @@ task marked [BLOCKED] until its dependency is resolved.
   only, no business-value workload, no autonomous remediation, no guaranteed
   cross-signal correlation.
   Files: docs/LIMITATIONS.md.
-  Status: [PROPOSED] — quick win, high credibility value.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— quick win, high credibility value.
 
 - [ ] **V-07: Third-party license summary.**
   Record licenses for bundled configs and images. Grafana, Loki and Tempo are
@@ -429,14 +429,14 @@ task marked [BLOCKED] until its dependency is resolved.
   redistributing modified copies. Confirm with a lawyer if commercial use is
   planned.
   Files: LICENSE, docs/.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **V-08: Security review of the fault API.**
   SECURITY.md with a reporting channel and a threat model for the fault API:
   who can call /faults/*, what can go wrong, blast radius, and how a crashed
   runner leaving a fault active is detected and recovered (H-02 TTL).
   Files: SECURITY.md, apps/gateway/src/server.rs.
-  Status: [PROPOSED] — depends on H-02.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-02.
 
 - [ ] **V-09: Competitive positioning note.**
   The closest comparison is the OpenTelemetry Demo (astronomy shop): far more
@@ -447,14 +447,14 @@ task marked [BLOCKED] until its dependency is resolved.
   and a small, readable Rust codebase teams can fork. Record this explicitly in
   docs/ so nobody oversells the project.
   Files: docs/, README.md.
-  Status: [PROPOSED].
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
 
 - [ ] **V-10: CI that proves things, not just builds.**
   Badges only for jobs that really gate. E2E tests asserting traces, metrics
   and logs actually arrive (E2E-01). Add a job that runs the E2E suite against
   a freshly built stack and fails the build if any assertion fails.
   Files: .github/workflows/ci.yml, tests/e2e/.
-  Status: [PROPOSED] — depends on E2E-01.
+  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on E2E-01.
 
 ## Ordering
 

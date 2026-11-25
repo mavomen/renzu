@@ -8,9 +8,14 @@
 //! compares two saved experiment reports and prints metric deltas.
 
 mod compare;
+mod diagnose;
 mod loadgen;
+mod overhead;
+mod profile;
 mod report;
 mod scenarios;
+mod sli;
+mod slo;
 pub mod telemetry;
 
 use std::path::{Path, PathBuf};
@@ -97,6 +102,69 @@ enum Command {
         left: String,
         /// Identifier of the run to compare against the baseline.
         right: String,
+    },
+    /// Check SLA compliance for a saved experiment run.
+    Sli {
+        /// Run identifier to check SLA compliance for.
+        run_id: String,
+        /// Availability target as a fraction in [0, 1] (default 0.99 = 99%).
+        #[arg(long, default_value = "0.99")]
+        availability_target: f64,
+        /// Latency target for p95 in milliseconds (default 500).
+        #[arg(long, default_value = "500")]
+        latency_target_ms: f64,
+    },
+    /// Check SLO compliance and error budget for a saved experiment run.
+    Slo {
+        /// Run identifier to check SLO compliance for.
+        run_id: String,
+        /// Availability target as a fraction in [0, 1] (default 0.99 = 99%).
+        #[arg(long, default_value = "0.99")]
+        availability_target: f64,
+        /// Latency target for p95 in milliseconds (default 500).
+        #[arg(long, default_value = "500")]
+        latency_target_ms: f64,
+    },
+    /// Correlate perf profile samples with a saved experiment run's time window.
+    ProfileCorrelate {
+        /// Run identifier to correlate profile samples for.
+        run_id: String,
+        /// Path to `perf script` output file.
+        perf_script: PathBuf,
+        /// Seconds between perf recording start and run start (default 0).
+        #[arg(long, default_value = "0")]
+        perf_offset_seconds: f64,
+        /// Number of top functions to report (default 10).
+        #[arg(long, default_value = "10")]
+        top_n: usize,
+    },
+    /// Generate diagnostic hypotheses for a saved experiment run.
+    Diagnose {
+        /// Run identifier to diagnose.
+        run_id: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long, default_value = "false")]
+        json: bool,
+    },
+    /// Measure resource and telemetry overhead for a load test run.
+    MeasureOverhead {
+        /// Name of the scenario to measure.
+        scenario: String,
+        /// Test duration in seconds (1-3600).
+        #[arg(long, default_value = "10")]
+        duration: u64,
+        /// Requests per second (mutually exclusive with --concurrency).
+        #[arg(long, conflicts_with = "concurrency")]
+        rate: Option<u64>,
+        /// Number of concurrent clients (mutually exclusive with --rate).
+        #[arg(long, conflicts_with = "rate")]
+        concurrency: Option<u64>,
+        /// Target URL for each request.
+        #[arg(long, default_value = "http://127.0.0.1:8080/health")]
+        url: String,
+        /// Emit machine-readable JSON output.
+        #[arg(long, default_value = "false")]
+        json: bool,
     },
 }
 
@@ -234,6 +302,37 @@ fn dispatch(command: Command) -> ExitCode {
         } => run_or_report(|| load_test(scenario, duration, rate, concurrency, url)),
         Command::Report { run_id } => run_or_report(move || report_command(run_id)),
         Command::Compare { left, right } => run_or_report(move || compare_command(left, right)),
+        Command::Sli {
+            run_id,
+            availability_target,
+            latency_target_ms,
+        } => run_or_report(move || sli_command(&run_id, availability_target, latency_target_ms)),
+        Command::Slo {
+            run_id,
+            availability_target,
+            latency_target_ms,
+        } => run_or_report(move || slo_command(&run_id, availability_target, latency_target_ms)),
+        Command::ProfileCorrelate {
+            run_id,
+            perf_script,
+            perf_offset_seconds,
+            top_n,
+        } => run_or_report(move || {
+            profile_correlate_command(&run_id, &perf_script, perf_offset_seconds, top_n)
+        }),
+        Command::Diagnose { run_id, json } => {
+            run_or_report(move || diagnose_command(&run_id, json))
+        }
+        Command::MeasureOverhead {
+            scenario,
+            duration,
+            rate,
+            concurrency,
+            url,
+            json,
+        } => run_or_report(move || {
+            measure_overhead_command(&scenario, duration, rate, concurrency, &url, json)
+        }),
     }
 }
 
@@ -580,5 +679,259 @@ fn report_read_error(run_id: &str, err: std::io::Error) -> CliError {
         CliError::Orchestration(format!("unknown run id: {run_id}"))
     } else {
         CliError::Orchestration(format!("failed to read report {run_id}: {err}"))
+    }
+}
+
+/// Check SLA compliance for a saved experiment run.
+///
+/// Prints availability and latency SLI results against the configured
+/// targets. Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn sli_command(
+    run_id: &str,
+    availability_target: f64,
+    latency_target_ms: f64,
+) -> Result<ExitCode, CliError> {
+    match crate::sli::compute_sli_for_run(run_id, availability_target, latency_target_ms) {
+        Ok(sli) => {
+            println!("SLA compliance for run {}", sli.run_id);
+            println!("  total requests:    {}", sli.total_requests);
+            if sli.insufficient_data {
+                println!("  availability:      insufficient data (no requests)");
+                println!("  latency p95:       insufficient data (no requests)");
+            } else {
+                let avail_status = if sli.availability_met {
+                    "MET"
+                } else {
+                    "NOT MET"
+                };
+                let lat_status = if sli.latency_met { "MET" } else { "NOT MET" };
+                println!(
+                    "  availability:      {:.2}% (target >= {:.0}%) {}",
+                    sli.availability * 100.0,
+                    sli.availability_target * 100.0,
+                    avail_status
+                );
+                println!(
+                    "  latency p95:       {:.1} ms (target <= {:.0} ms) {}",
+                    sli.latency_p95_ms, sli.latency_target_ms, lat_status
+                );
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to read report {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Check SLO compliance and error budget for a saved experiment run.
+///
+/// Prints availability and latency SLO results against the configured
+/// targets, including error-budget remaining (`target − observed`).
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn slo_command(
+    run_id: &str,
+    availability_target: f64,
+    latency_target_ms: f64,
+) -> Result<ExitCode, CliError> {
+    match crate::slo::compute_slo_for_run(run_id, availability_target, latency_target_ms) {
+        Ok(slo) => {
+            println!("SLO compliance for run {}", slo.run_id);
+            println!("  total requests:    {}", slo.total_requests);
+            if slo.insufficient_data {
+                println!("  availability:      insufficient data (no requests)");
+                println!("  latency p95:       insufficient data (no requests)");
+            } else {
+                let avail_status = if slo.availability_met {
+                    "MET"
+                } else {
+                    "NOT MET"
+                };
+                let lat_status = if slo.latency_met { "MET" } else { "NOT MET" };
+                println!(
+                    "  availability:      {:.2}% (target >= {:.0}%) {}",
+                    slo.availability * 100.0,
+                    slo.availability_target * 100.0,
+                    avail_status
+                );
+                println!(
+                    "  availability budget: {:+.4} ({} remaining)",
+                    slo.availability_budget_remaining,
+                    if slo.availability_budget_remaining > 0.0 {
+                        "headroom"
+                    } else {
+                        "over budget"
+                    }
+                );
+                println!(
+                    "  latency p95:       {:.1} ms (target <= {:.0} ms) {}",
+                    slo.latency_p95_ms, slo.latency_target_ms, lat_status
+                );
+                println!(
+                    "  latency budget:    {:+.1} ms ({} remaining)",
+                    slo.latency_budget_remaining,
+                    if slo.latency_budget_remaining > 0.0 {
+                        "headroom"
+                    } else {
+                        "over budget"
+                    }
+                );
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to read report {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Correlate perf profile samples with a saved experiment run's time window.
+///
+/// Prints a table of top functions observed during the run's
+/// `start_time` + `duration_secs` window.
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn profile_correlate_command(
+    run_id: &str,
+    perf_script_path: &PathBuf,
+    offset_seconds: f64,
+    top_n: usize,
+) -> Result<ExitCode, CliError> {
+    match crate::profile::correlate_profile_for_run(run_id, perf_script_path, offset_seconds, top_n)
+    {
+        Ok(result) => {
+            println!(
+                "Profile correlation for run {} ({}s)",
+                result.run_id, result.duration_secs
+            );
+            println!("  samples in window: {}", result.samples_in_window);
+            if result.top_functions.is_empty() {
+                println!("  top functions:     none observed in window");
+            } else {
+                println!("  top functions:");
+                for (function, count) in &result.top_functions {
+                    println!("    {:<40} {}", function, count);
+                }
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to correlate profile {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Generate diagnostic hypotheses for a saved experiment run.
+///
+/// Prints a human-readable table of hypotheses (each with kind, confidence,
+/// evidence, and uncertainty) or JSON with `--json`.
+/// Unknown run IDs produce an [`CliError::Orchestration`] (exit 1).
+fn diagnose_command(run_id: &str, json: bool) -> Result<ExitCode, CliError> {
+    match crate::diagnose::diagnose_for_run(run_id) {
+        Ok(result) => {
+            if json {
+                let json_str = serde_json::to_string_pretty(&result)
+                    .map_err(|e| CliError::Internal(format!("serialize diagnosis: {e}")))?;
+                println!("{json_str}");
+            } else {
+                println!(
+                    "Diagnosis for run {} (scenario: {})",
+                    result.run_id, result.scenario
+                );
+                if result.insufficient_data {
+                    println!("  insufficient data: no requests recorded");
+                } else {
+                    println!("  hypotheses:");
+                    for hypothesis in &result.hypotheses {
+                        let kind_str = match hypothesis.kind {
+                            crate::diagnose::HypothesisKind::Observation => "observation",
+                            crate::diagnose::HypothesisKind::Inference => "inference",
+                        };
+                        println!(
+                            "  - [{}] {} (confidence: {}, kind: {})",
+                            hypothesis.id, hypothesis.text, hypothesis.confidence, kind_str
+                        );
+                        if !hypothesis.evidence.is_empty() {
+                            println!("      evidence:");
+                            for evidence in &hypothesis.evidence {
+                                println!("        * {evidence}");
+                            }
+                        }
+                        if let Some(uncertainty) = &hypothesis.uncertainty {
+                            println!("      uncertainty: {uncertainty}");
+                        }
+                    }
+                }
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            Err(CliError::Orchestration(format!("unknown run id: {run_id}")))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to diagnose run {run_id}: {err}"
+        ))),
+    }
+}
+
+/// Measure resource and telemetry overhead for a load test run.
+///
+/// Prints a human-readable table of CPU/memory deltas and throughput/error
+/// rate, or JSON with `--json`.
+fn measure_overhead_command(
+    scenario: &str,
+    duration: u64,
+    rate: Option<u64>,
+    concurrency: Option<u64>,
+    url: &str,
+    json: bool,
+) -> Result<ExitCode, CliError> {
+    match crate::overhead::measure_overhead(scenario, duration, rate, concurrency, url) {
+        Ok(result) => {
+            if json {
+                let json_str = serde_json::to_string_pretty(&result)
+                    .map_err(|e| CliError::Internal(format!("serialize overhead: {e}")))?;
+                println!("{json_str}");
+            } else {
+                println!(
+                    "Overhead measurement for scenario {} ({}s)",
+                    result.scenario, result.duration_secs
+                );
+                println!("  target:            {}", result.url);
+                if let Some(rps) = result.rate_rps {
+                    println!("  rate:              {} rps", rps);
+                }
+                if let Some(n) = result.concurrency {
+                    println!("  concurrency:       {}", n);
+                }
+                println!(
+                    "  CPU user delta:    {:.3} s",
+                    result.cpu_user_delta_seconds
+                );
+                println!(
+                    "  CPU system delta:  {:.3} s",
+                    result.cpu_system_delta_seconds
+                );
+                println!("  VmRSS delta:       {} kB", result.vm_rss_delta_kb);
+                println!(
+                    "  requests:          {} total, {} successful, {} failed",
+                    result.total_requests, result.successful, result.failed
+                );
+                println!("  throughput:        {:.1} rps", result.throughput_rps);
+                println!("  error rate:        {:.1}%", result.error_rate_percent);
+            }
+            Ok(ExitCode::from(0))
+        }
+        Err(err) => Err(CliError::Orchestration(format!(
+            "failed to measure overhead: {err}"
+        ))),
     }
 }
