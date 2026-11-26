@@ -164,17 +164,43 @@ impl Clone for Telemetry {
 }
 
 impl Telemetry {
-    /// Returns true if no span export has failed since the provider was created.
+    /// Returns true if no span or log export has failed since the provider was
+    /// created.
     ///
-    /// A cumulative counter: once a failure occurs, readiness stays degraded
+    /// Counters are cumulative: once a failure occurs, readiness stays degraded
     /// until the process restarts.
     pub fn export_healthy(&self) -> bool {
-        self.inner.export_failures.load(Ordering::Relaxed) == 0
+        self.export_failures() == 0 && self.log_export_failures() == 0
+    }
+
+    /// Number of failed span export batches since the provider was created.
+    pub fn export_failures(&self) -> u64 {
+        self.inner.export_failures.load(Ordering::Relaxed)
+    }
+
+    /// Number of failed log export batches since the provider was created.
+    pub fn log_export_failures(&self) -> u64 {
+        self.inner.log_export_failures.load(Ordering::Relaxed)
     }
 
     /// Returns true if no log export has failed since the provider was created.
     pub fn log_export_healthy(&self) -> bool {
-        self.inner.log_export_failures.load(Ordering::Relaxed) == 0
+        self.log_export_failures() == 0
+    }
+
+    /// Build a handle with preset failure counters for unit tests.
+    #[cfg(test)]
+    pub(crate) fn with_counters(span_failures: u64, log_failures: u64) -> Self {
+        Self {
+            inner: Arc::new(TelemetryInner {
+                provider: SdkTracerProvider::builder().build(),
+                logger_provider: SdkLoggerProvider::builder().build(),
+                export_failures: Arc::new(AtomicU64::new(span_failures)),
+                log_export_failures: Arc::new(AtomicU64::new(log_failures)),
+                shutdown_done: AtomicBool::new(false),
+                _dispatch_guard: None,
+            }),
+        }
     }
 }
 
@@ -451,5 +477,31 @@ impl Drop for Telemetry {
         if Arc::strong_count(&self.inner) == 1 {
             self.shutdown();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_healthy_requires_span_and_log_exports_to_succeed() {
+        let healthy = Telemetry::with_counters(0, 0);
+        assert!(healthy.export_healthy());
+        assert_eq!(healthy.export_failures(), 0);
+        assert_eq!(healthy.log_export_failures(), 0);
+        assert!(healthy.log_export_healthy());
+
+        let span_failed = Telemetry::with_counters(1, 0);
+        assert!(!span_failed.export_healthy());
+        assert!(span_failed.log_export_healthy());
+
+        let log_failed = Telemetry::with_counters(0, 1);
+        assert!(!log_failed.export_healthy());
+        assert!(!log_failed.log_export_healthy());
+
+        let both_failed = Telemetry::with_counters(2, 3);
+        assert_eq!(both_failed.export_failures(), 2);
+        assert_eq!(both_failed.log_export_failures(), 3);
     }
 }

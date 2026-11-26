@@ -116,7 +116,7 @@ Dependencies: F-001.
 
 **Status:** `DONE`
 
-**Verification evidence:** `scripts/verify-infrastructure.sh` runs in the CI e2e job, which is green on `develop`. Startup ordering, health checks, startup diagnostics, and shutdown behavior are exercised by that scripted verification.
+**Verification evidence:** `scripts/verify-infrastructure.sh` runs in the CI e2e job, which is green on `develop`. Startup ordering, health checks, startup diagnostics, and shutdown behavior are exercised by that scripted verification. Application readiness now also reports span and log exporter failure counters; this is covered by unit tests and a live check with an unreachable OTLP endpoint.
 
 **Known limitation:** Local verification can be blocked when another service occupies `127.0.0.1:5432`; use a Compose override for the host port in that case.
 
