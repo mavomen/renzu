@@ -114,9 +114,11 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
-**Reason for remaining IN_PROGRESS:** Health checks and startup dependencies are verified locally with `scripts/verify-infrastructure.sh` when Compose can bind all loopback ports, but the updated CI e2e job has not yet been observed green. Local verification can be blocked by an unrelated service already using `127.0.0.1:5432`; use a Compose override for the host port in that case.
+**Verification evidence:** `scripts/verify-infrastructure.sh` runs in the CI e2e job, which is green on `develop`. Startup ordering, health checks, startup diagnostics, and shutdown behavior are exercised by that scripted verification.
+
+**Known limitation:** Local verification can be blocked when another service occupies `127.0.0.1:5432`; use a Compose override for the host port in that case.
 
 **Objective:** Provide a repeatable local environment.
 
