@@ -456,6 +456,8 @@ Dependencies: F-012, F-014.
 
 **Status:** `DONE`
 
+**Verification evidence:** `scripts/e2e-metrics-report.sh` runs in the CI e2e job. It asserts that `renzu_http_requests_total` is queryable in Prometheus and that a short baseline load test writes a schema-v1 JSON report matching its printed run ID. End-to-end trace and log proofs are covered by `scripts/e2e-trace-visualization.sh` and `scripts/e2e-log-trace-correlation.sh`.
+
 **Objective:** Turn scenario executions into reproducible investigations.
 
 Scope:

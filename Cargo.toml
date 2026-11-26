@@ -20,7 +20,7 @@ tower-http = { version = "0.5", features = ["trace"] }
 tower = "0.5"
 reqwest = { version = "0.11", features = ["json", "blocking", "default-tls", "rustls-tls"] }
 opentelemetry = { version = "0.33.1", features = ["logs"] }
-opentelemetry_sdk = { version = "0.33.1", features = ["logs"] }
+opentelemetry_sdk = { version = "0.33.1", features = ["logs", "experimental_metrics_periodicreader_with_async_runtime", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.33.1", features = ["http-proto", "metrics", "reqwest-client", "trace", "logs"] }
 tracing-opentelemetry = "0.34.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "migrate"] }

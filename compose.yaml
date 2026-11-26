@@ -213,6 +213,7 @@ services:
       - RENZU_DATABASE_URL=postgres://renzu:renzu@postgres:5432/renzu
       - RENZU_ORDERS_URL=http://orders:8081
       - RENZU_OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
+      - RENZU_OTLP_METRICS_ENDPOINT=http://otel-collector:4318/v1/metrics
     deploy:
       resources:
         limits:

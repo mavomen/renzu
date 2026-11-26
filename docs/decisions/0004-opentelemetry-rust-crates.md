@@ -58,6 +58,16 @@ Operators matching the Compose collector (F-003/F-007) should set
 OTLP HTTP receiver. The HTTP exporter posts to the endpoint URL as-is, so the
 configured endpoint must include the `/v1/traces` path.
 
+## Metrics export runtime
+
+The gateway uses `opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader`
+with the Tokio runtime instead of the default `PeriodicReader`. The OTLP HTTP
+exporter uses `reqwest`, which needs a Tokio reactor; the default reader spawns
+a plain OS thread and panics when the exporter polls. This requires the
+`experimental_metrics_periodicreader_with_async_runtime` and `rt-tokio` features
+on `opentelemetry_sdk`. E2E verification in `scripts/e2e-metrics-report.sh`
+asserts that exported counters reach Prometheus.
+
 ## Resource attributes
 
 Every span carries:
