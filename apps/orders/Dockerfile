@@ -11,7 +11,7 @@ RUN mkdir -p apps/orders/src apps/gateway/src && \
 COPY . .
 RUN cargo build --release --bin orders
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/orders /usr/local/bin/orders
 EXPOSE 8081
 CMD ["orders"]

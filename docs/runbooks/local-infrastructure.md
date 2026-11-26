@@ -233,6 +233,11 @@ Configuration:
   values as tracing (`off`, `error`, `warn`, `info`, `debug`, `trace`).
 - `RENZU_ENVIRONMENT` (default `local`) distinguishes deployment environments
   without provisioning a backend.
+- `RENZU_OTLP_ENDPOINT` (default `http://127.0.0.1:4318/v1/traces`) is the
+  Collector's OTLP **HTTP** endpoint. Compose sets it to
+  `http://otel-collector:4318/v1/traces` for both services. The log endpoint is
+  derived by replacing `/v1/traces` with `/v1/logs`. Port `4317` is the
+  Collector's gRPC receiver and must not be used with the HTTP exporter.
 
 ### Sensitive-data redaction
 

@@ -20,6 +20,18 @@ use tower::ServiceExt;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt as _;
 
+static TELEMETRY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// Serialize tests that mutate telemetry environment variables or install
+/// tracing subscribers; both are process-global.
+async fn telemetry_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    TELEMETRY_TEST_LOCK.lock().await
+}
+
+/// Synchronous counterpart for tests that do not run on a Tokio runtime.
+fn blocking_telemetry_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    TELEMETRY_TEST_LOCK.blocking_lock()
+}
+
 #[derive(Clone, Debug)]
 struct OtlpSpan {
     name: String,
@@ -51,16 +63,15 @@ fn any_value_to_string(value: &AnyValue) -> String {
     }
 }
 
-/// Build a test router with telemetry.
-///
-/// Uses a lazy database pool so no real database connection is established.
-fn test_app() -> Router {
-    let telemetry = orders::telemetry::Telemetry::init("info").expect("telemetry init");
+/// Build a router using a caller-owned telemetry handle so the provider stays
+/// alive for the duration of a telemetry assertion.
+fn app_with_telemetry(telemetry: Telemetry) -> Router {
     orders::server::app(telemetry)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn log_and_trace_share_trace_id() {
+    let _guard = telemetry_test_guard().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test receiver should bind");
@@ -150,13 +161,13 @@ async fn log_and_trace_share_trace_id() {
                 Err(_) => return,
             };
             let svc = service.clone();
-            if hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), svc)
-                .await
-                .is_err()
-            {
-                return;
-            }
+            // Each exporter keeps its connection alive, so serve connections
+            // concurrently or the log export cannot reach this receiver.
+            tokio::spawn(async move {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
         }
     });
 
@@ -166,7 +177,7 @@ async fn log_and_trace_share_trace_id() {
     std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
     let telemetry = Telemetry::init("info").expect("telemetry should initialize");
 
-    let router = test_app();
+    let router = app_with_telemetry(telemetry.clone());
     let request = Request::builder()
         .uri("/health")
         .method("GET")
@@ -193,11 +204,17 @@ async fn log_and_trace_share_trace_id() {
         .collect();
     let span = received_spans
         .iter()
-        .find(|s| {
-            s.name == "http.request" && s.attributes.get("route") == Some(&"/health".to_string())
-        })
+        .find(|s| s.name == "request")
         .cloned()
         .expect("expected GET /health span to be exported to OTLP receiver");
+    assert_eq!(
+        span.attributes.get("method").map(String::as_str),
+        Some("GET")
+    );
+    assert_eq!(
+        span.attributes.get("uri").map(String::as_str),
+        Some("/health")
+    );
     let span_trace_id = span.trace_id.clone();
 
     let received_logs: Vec<_> = logs
@@ -263,6 +280,7 @@ fn json_subscriber(captured: Arc<Mutex<Vec<u8>>>) -> impl tracing::Subscriber {
 
 #[test]
 fn redacted_value_emits_redacted() {
+    let _guard = blocking_telemetry_test_guard();
     let captured = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
     let subscriber = json_subscriber(captured);
@@ -296,6 +314,7 @@ fn redacted_value_emits_redacted() {
 
 #[test]
 fn log_events_carries_service_and_environment_fields() {
+    let _guard = blocking_telemetry_test_guard();
     let captured = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
     let subscriber = json_subscriber(captured);

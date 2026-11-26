@@ -16,12 +16,15 @@ use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::log_processor_with_async_runtime::BatchLogProcessor;
 use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use opentelemetry_sdk::Resource;
 use std::fmt::{self};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -37,7 +40,7 @@ use tracing_subscriber::Layer;
 
 const SERVICE_NAME: &str = "orders";
 const DEFAULT_ENVIRONMENT: &str = "local";
-const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4317/v1/traces";
+const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4318/v1/traces";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Runtime environment, read from `RENZU_ENVIRONMENT` (default `local`).
@@ -240,6 +243,7 @@ struct TelemetryInner {
     logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
     export_failures: Arc<AtomicU64>,
     log_export_failures: Arc<AtomicU64>,
+    shutdown_done: AtomicBool,
 }
 
 impl Clone for Telemetry {
@@ -281,7 +285,7 @@ impl Telemetry {
         let export_failures = counting_exporter.failures();
 
         let provider = SdkTracerProvider::builder()
-            .with_batch_exporter(counting_exporter)
+            .with_span_processor(BatchSpanProcessor::builder(counting_exporter, Tokio).build())
             .with_resource(
                 Resource::builder()
                     .with_attributes(vec![
@@ -303,8 +307,9 @@ impl Telemetry {
         let counting_log_exporter = CountingLogExporter::new(log_exporter);
         let log_export_failures = counting_log_exporter.failures.clone();
 
+        let log_processor = BatchLogProcessor::builder(counting_log_exporter, Tokio).build();
         let logger_provider = SdkLoggerProvider::builder()
-            .with_simple_exporter(counting_log_exporter)
+            .with_log_processor(log_processor)
             .with_resource(
                 Resource::builder()
                     .with_attributes(vec![
@@ -344,6 +349,7 @@ impl Telemetry {
                 logger_provider,
                 export_failures,
                 log_export_failures,
+                shutdown_done: AtomicBool::new(false),
             }),
         })
     }
@@ -358,6 +364,9 @@ impl Telemetry {
     }
 
     pub fn shutdown(&self) {
+        if self.inner.shutdown_done.swap(true, Ordering::SeqCst) {
+            return;
+        }
         match self.inner.provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
             Ok(()) => tracing::debug!("trace shutdown complete"),
             Err(e) => tracing::warn!(error = %e, "trace shutdown failed"),
@@ -375,6 +384,11 @@ impl Telemetry {
 
 impl Drop for Telemetry {
     fn drop(&mut self) {
-        self.shutdown();
+        // Clones are handed to request handlers. Only the last owner may shut
+        // down the shared providers, otherwise one request ends telemetry for
+        // every subsequent request.
+        if Arc::strong_count(&self.inner) == 1 {
+            self.shutdown();
+        }
     }
 }

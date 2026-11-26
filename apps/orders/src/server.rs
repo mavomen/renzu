@@ -73,7 +73,7 @@ async fn order(Path(id): Path<String>) -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn run(config: Config) -> Result<(), AppError> {
+pub async fn run(config: Config, telemetry: Telemetry) -> Result<(), AppError> {
     let addr: SocketAddr = config
         .bind_addr()
         .parse()
@@ -81,12 +81,9 @@ pub async fn run(config: Config) -> Result<(), AppError> {
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
         AppError::Internal(format!("failed to bind to {}: {e}", config.bind_addr()))
     })?;
-    let telemetry = crate::telemetry::Telemetry::init(&config.log_level)
-        .map_err(|e| AppError::Internal(format!("telemetry init error: {e}")))?;
-    let app = app(telemetry.clone());
+    let app = app(telemetry);
     info!(address = %addr, "orders service listening");
     let result = axum::serve(listener, app).await;
-    telemetry.shutdown();
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
     Ok(())
 }

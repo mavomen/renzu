@@ -181,7 +181,7 @@ services:
       - RENZU_HOST=0.0.0.0
       - RENZU_PORT=8081
       - RENZU_LOG_LEVEL=info
-      - RENZU_OTLP_ENDPOINT=http://otel-collector:4317/v1/traces
+      - RENZU_OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
     deploy:
       resources:
         limits:
@@ -191,7 +191,7 @@ services:
       otel-collector:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 2 http://127.0.0.1:8081/health >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -211,6 +211,7 @@ services:
       - RENZU_LOG_LEVEL=info
       - RENZU_DATABASE_URL=postgres://renzu:renzu@postgres:5432/renzu
       - RENZU_ORDERS_URL=http://orders:8081
+      - RENZU_OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
     deploy:
       resources:
         limits:
@@ -222,7 +223,7 @@ services:
       otel-collector:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 2 http://127.0.0.1:8080/health >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 3
