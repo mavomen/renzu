@@ -97,8 +97,8 @@ Docker network DNS names; those ports are not published to the host.
 | Loki | `wget -qO- http://localhost:3100/ready` | Loki ready endpoint returns 200. |
 | Grafana | `wget -qO- http://localhost:3000/api/health` | Grafana health API returns 200. |
 | PostgreSQL | `pg_isready -U $RENZU_DB_USER -d $RENZU_DB_NAME` | Postgres accepts connections. |
-| Orders | `wget -qO- http://localhost:8081/health` | Orders health endpoint returns 200. |
-| Gateway | `wget -qO- http://localhost:8080/health` | Gateway health endpoint returns 200. |
+| Orders | `curl -fsS --max-time 2 http://127.0.0.1:8081/health` | Orders health endpoint returns 200. |
+| Gateway | `curl -fsS --max-time 2 http://127.0.0.1:8080/health` | Gateway health endpoint returns 200. |
 
 All healthchecks use `interval: 10s`, `timeout: 3s`, `retries: 3`, `start_period: 15s`.
 
@@ -164,8 +164,7 @@ curl -X POST http://127.0.0.1:4318/v1/traces \
   -d '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoke-test"}}]},"spans":[{"traceId":"0123456789abcdef0123456789abcdef","spanId":"0123456789abcdef","name":"smoke-span","kind":1,"startTimeUnixNano":"1000","endTimeUnixNano":"2000","status":{"code":1}}]}]}'
 ```
 
-Then open Grafana at http://127.0.0.1:3000 (login with `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`, default `admin/admin`), navigate to the
-Tempo data source, and query service `smoke-test`.
+Then open Grafana at http://127.0.0.1:3000 (login with `GF_SECURITY_ADMIN_USER`/`GF_SECURITY_ADMIN_PASSWORD`, default `admin/admin`), navigate to Explore, select the provisioned Tempo data source, and query service `smoke-test`.
 
 ## Trace Visualization (Tempo + Grafana)
 
@@ -189,11 +188,26 @@ Automated verification:
 ./scripts/e2e-trace-visualization.sh
 ```
 
-The script builds and runs the gateway, hits `GET /health`, `/ready` and `/`,
-polls the Tempo API via Grafana, and asserts that traces appear with
-`service.name=gateway` as a resource attribute and span durations greater than
-zero. It exits 0 on success and always stops the gateway process it started;
-compose is left running.
+The script sends a synthetic OTLP trace directly to Tempo's HTTP receiver and
+asserts the trace is queryable by ID with a named span and a positive duration.
+It exits 0 on success; compose is left running.
+
+### Log/trace correlation E2E (F-013)
+
+```bash
+# Requires docker compose up -d (all services) to be running.
+./scripts/e2e-log-trace-correlation.sh
+```
+
+This exercises the real application and Collector path: it requests
+`GET /order/<unique-id>` on the gateway, finds the resulting application log in
+Loki by that unique ID, reads the log's native `traceid`, and asserts that the
+same trace ID is retrievable from Tempo with a span for the same order ID. It
+exits 0 on success; compose is left running.
+
+In Grafana, the Loki data source provisions a derived field named `TraceID` for
+log lines containing `"traceid":"<id>"`. Selecting that link opens the trace in
+the provisioned Tempo data source.
 
 ## Batching
 
@@ -212,8 +226,10 @@ the application.
 
 ## Application logging
 
-The gateway and orders emit newline-delimited JSON logs to stdout. Logs are
-collected by the OTel Collector and forwarded to Loki (M2/F-013).
+The gateway and orders emit newline-delimited JSON logs to stdout for local
+reading. The same `tracing` events are converted to OTLP LogRecords by
+`OpenTelemetryTracingBridge`; the Collector forwards those records to Loki
+(F-013).
 
 Each log event is a JSON object with at least these fields:
 
@@ -239,6 +255,12 @@ Configuration:
   derived by replacing `/v1/traces` with `/v1/logs`. Port `4317` is the
   Collector's gRPC receiver and must not be used with the HTTP exporter.
 
+OTLP records stored in Loki carry `body`, `severity`, `traceid`, `spanid`,
+`attributes`, and `instrumentation_scope` in the log line. The `renzu` CLI uses
+`RENZU_TEMPO_URL` (default `http://127.0.0.1:3200`) and `RENZU_GRAFANA_URL`
+(default `http://127.0.0.1:3000`) to build trace deep links in experiment
+reports.
+
 ### Sensitive-data redaction
 
 Redaction is call-site opt-in through the [`Redacted`] wrapper:
@@ -253,10 +275,11 @@ emitted as-is. Documented sensitive keys: `Authorization`, `Cookie`,
 
 ### Known limitations
 
-- `trace_id`/`span_id` are not injected into log events at M1: tracing event
-  fields are immutable at creation time, and the OpenTelemetry trace context is
-  not exposed as tracing span fields. Correlation is recorded on spans (F-006)
-  and the log fields can be populated once spans declare them (F-013).
+- OTLP log records carry native `traceid` and `spanid` fields from the current
+  span. Loki stores them inside the log line rather than as indexed labels.
+  Correlation from a log line to a trace is available through the Grafana
+  derived field; trace-to-log UI links are not configured because the Collector
+  currently labels application log streams `service_name=unknown_service`.
 - Redaction only applies where call sites opt in; unredacted sensitive data
   logged directly is not caught.
 

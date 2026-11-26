@@ -323,8 +323,8 @@ mod tests {
         let mut result = sample_result();
         // Simulate telemetry references being collected
         result.telemetry_references = vec![
-            "http://127.0.0.1:16686/trace/abc123".to_string(),
-            "http://127.0.0.1:3000/explore?orgId=1&left=[\"now-1h\",\"now\",\"Jaeger\",{\"query\":\"traceID\",\"traceID\":\"abc123\"}]".to_string(),
+            "http://127.0.0.1:3200/api/traces/abc123".to_string(),
+            "http://127.0.0.1:3000/explore?orgId=1&left=[\"now-1h\",\"now\",\"Tempo\",{\"query\":\"traceID\",\"traceID\":\"abc123\"}]".to_string(),
         ];
         let report = build_report(
             "baseline-123",
@@ -342,7 +342,7 @@ mod tests {
         assert_eq!(report.workload.value, 20);
         assert_eq!(report.latency.p95_ms, 20.0);
         assert_eq!(report.telemetry_references.len(), 2);
-        assert!(report.telemetry_references[0].contains("/trace/abc123"));
+        assert!(report.telemetry_references[0].contains("/api/traces/abc123"));
         assert!(report.telemetry_references[1].contains("explore"));
         assert!(report
             .warnings
@@ -411,7 +411,7 @@ mod tests {
     fn round_trip_uses_temp_dir() {
         with_temp_reports_dir(|| {
             let mut result = sample_result();
-            result.telemetry_references = vec!["http://jaeger/trace/xyz".to_string()];
+            result.telemetry_references = vec!["http://127.0.0.1:3200/api/traces/xyz".to_string()];
             let report = build_report(
                 "rt-1",
                 &result,

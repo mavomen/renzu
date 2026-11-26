@@ -353,7 +353,7 @@ Acceptance criteria:
 - Correlation behavior is tested or demonstrated.
 - No unsupported cross-backend correlation is claimed.
 
-Known limitation: None. Both gateway and orders services export OTLP logs via the OpenTelemetry log bridge (`opentelemetry-appender-tracing`), and log records carry native trace_id and span_id fields. Integration tests in both services (`log_and_trace_share_trace_id`) assert that logs emitted inside a handler span carry the same trace ID as the exported span.
+Known limitation: Loki labels application OTLP log streams `service_name=unknown_service`; `traceid` and `spanid` are stored in the log line rather than as indexed labels. Grafana provisions a log-to-trace derived field, but trace-to-log UI linking is not configured. Both services export OTLP logs via `opentelemetry-appender-tracing`, and integration tests in both services (`log_and_trace_share_trace_id`) assert that a log emitted inside a handler span carries the same trace ID as the exported span. End-to-end proof: `scripts/e2e-log-trace-correlation.sh` sends a traced gateway request, finds its log in Loki, and asserts the same trace ID is retrievable from Tempo.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
