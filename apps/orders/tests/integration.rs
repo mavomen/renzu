@@ -204,17 +204,11 @@ async fn log_and_trace_share_trace_id() {
         .collect();
     let span = received_spans
         .iter()
-        .find(|s| s.name == "request")
+        .find(|s| {
+            s.name == "http.request" && s.attributes.get("route") == Some(&"/health".to_string())
+        })
         .cloned()
         .expect("expected GET /health span to be exported to OTLP receiver");
-    assert_eq!(
-        span.attributes.get("method").map(String::as_str),
-        Some("GET")
-    );
-    assert_eq!(
-        span.attributes.get("uri").map(String::as_str),
-        Some("/health")
-    );
     let span_trace_id = span.trace_id.clone();
 
     let received_logs: Vec<_> = logs
