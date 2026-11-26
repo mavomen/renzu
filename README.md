@@ -64,14 +64,42 @@ With the stack running:
 ./scripts/e2e-trace-visualization.sh      # synthetic trace is queryable in Tempo
 ./scripts/e2e-log-trace-correlation.sh    # real request: Loki log -> Tempo trace
 ./scripts/e2e-metrics-report.sh           # Prometheus counter + saved JSON report
+./scripts/e2e-incident-journey.sh         # baseline vs db-latency, compare, Tempo
 ```
 
 The correlation script sends `GET /order/<unique-id>` to the gateway, finds the
 matching application log in Loki, reads its `traceid`, and asserts that Tempo
 returns the same trace with a span for that order. The metrics script generates
 gateway traffic, asserts that `renzu_http_requests_total` is queryable in
-Prometheus, runs a short baseline load test, and checks the saved report. All
-scripts leave Compose running.
+Prometheus, runs a short baseline load test, and checks the saved report. The
+incident-journey script reproduces the full latency investigation below using
+an isolated reports directory. All scripts leave Compose running.
+
+### Investigate a latency incident
+
+Run the baseline and faulted workloads against `/ready`, the endpoint where the
+database-latency fault is injected. The default load-test target (`/health`)
+does not inject latency, so the `--url` flag is required:
+
+```bash
+cargo run -p renzu -- load-test --scenario baseline \
+  --url http://127.0.0.1:8080/ready --duration 10 --rate 20
+# -> run id: baseline-<timestamp>
+
+cargo run -p renzu -- load-test --scenario db-latency \
+  --url http://127.0.0.1:8080/ready --duration 10 --rate 20
+# -> run id: db-latency-<timestamp>
+
+cargo run -p renzu -- compare <baseline-run-id> <db-latency-run-id>
+cargo run -p renzu -- diagnose <db-latency-run-id>
+```
+
+The fault adds 200 ms to each `/ready` request and is cleaned up automatically
+when the load test ends. Compare prints a compatibility warning because the
+scenario names differ; the p95 delta still shows the injected latency. Reports
+include best-effort Tempo API links for the slowest requests; the E2E script
+verifies traces independently through Tempo's search API because those links
+use client-generated IDs that are not guaranteed to resolve.
 
 ## CLI workflow
 

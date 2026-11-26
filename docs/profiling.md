@@ -196,8 +196,11 @@ Use `renzu load-test` (F-017) to generate a consistent load profile:
 # Baseline workload: 100 req/s for 60 seconds
 renzu load-test --scenario baseline --duration 60 --rate 100
 
-# Faulted workload: database latency scenario
-renzu load-test --scenario db-latency --duration 60 --rate 100
+# Faulted workload: database latency scenario.
+# The db-latency fault is injected in /ready; /health (the default target)
+# does not inject latency, so the URL must be set explicitly.
+renzu load-test --scenario db-latency \
+  --url http://127.0.0.1:8080/ready --duration 60 --rate 100
 
 # Concurrency workload: 20 concurrent clients
 renzu load-test --scenario baseline --duration 60 --concurrency 20
