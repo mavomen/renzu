@@ -116,7 +116,7 @@ Dependencies: F-001.
 
 **Status:** `IN_PROGRESS`
 
-**Reason for demotion:** No passing automated verification; e2e job fails on otel-collector/jaeger dependency; no test verifies health checks, startup dependencies, or shutdown behavior (see TODO.md V-04).
+**Reason for remaining IN_PROGRESS:** Health checks and startup dependencies are verified locally with `scripts/verify-infrastructure.sh` when Compose can bind all loopback ports, but the updated CI e2e job has not yet been observed green. Local verification can be blocked by an unrelated service already using `127.0.0.1:5432`; use a Compose override for the host port in that case.
 
 **Objective:** Provide a repeatable local environment.
 
@@ -228,7 +228,7 @@ Dependencies: F-003, F-006.
 
 **Status:** `IN_PROGRESS`
 
-**Reason for demotion:** Tempo provisioned but trace-visualization e2e unconfirmed; Jaeger-hardcoded references remain in loadgen.rs/report.rs (see TODO.md V-04).
+**Reason for remaining IN_PROGRESS:** `scripts/e2e-trace-visualization.sh` now passes locally against Tempo, and report deep links use Tempo/Grafana instead of Jaeger. CI has not yet been observed green with the rebuilt stack, so confirmation is still pending.
 
 **Objective:** Inspect trace spans and operation timing.
 
@@ -583,7 +583,7 @@ Scope:
 Scenarios:
 - `otel-collector-down` (`CollectorUnavailable`): telemetry export is broken
   while the application still responds. Symptom: requests succeed but no new
-  traces appear in the collector/Jaeger. Investigation: confirm `/health` is
+  traces appear in the Collector/Tempo. Investigation: confirm `/health` is
   healthy while trace export fails; the fault is structural (gateway flag),
   not verified against actual OTLP behavior.
 - `db-connection-failure` (`DatabaseConnectionFailure`): database connectivity
