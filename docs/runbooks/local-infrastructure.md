@@ -43,7 +43,7 @@ For shared or production-like environments, disable host port publication by rem
 ## Prerequisites
 
 - Docker Engine and Docker Compose (Compose V2, `docker compose`).
-- Approximately 4.75 CPU cores and 4.5 GB RAM for all containers combined (see Resource Estimates below).
+- Approximately 3.75 CPU cores and 3.75 GiB RAM for all containers combined (see Resource Estimates below).
 - Approximately 5–10 GB disk for volumes plus image layers.
 - No cloud account, paid service, or external AI API required (local-first).
 
@@ -144,7 +144,7 @@ accordingly. Too-low limits may cause OOM kills or CPU throttling.
 | Resource | Sum of limits |
 |----------|---------------|
 | CPU | 3.75 cores |
-| Memory | 4.25 GiB |
+| Memory | 3.75 GiB |
 | Disk (volumes) | Variable — depends on trace/log/DB retention |
 
 > **Note:** Docker Compose `deploy.resources.limits` are enforced by the container
@@ -280,6 +280,10 @@ emitted as-is. Documented sensitive keys: `Authorization`, `Cookie`,
   Correlation from a log line to a trace is available through the Grafana
   derived field; trace-to-log UI links are not configured because the Collector
   currently labels application log streams `service_name=unknown_service`.
+- The gateway forwards an inbound `traceparent` header to orders, but no global
+  W3C propagator is installed. Report trace links built from client-generated
+  `traceparent` IDs are therefore best-effort and may not resolve to a service
+  span.
 - Redaction only applies where call sites opt in; unredacted sensitive data
   logged directly is not caught.
 

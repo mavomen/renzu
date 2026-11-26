@@ -61,14 +61,14 @@ alongside the other telemetry backends.
 
 ### Positive
 - Logs, traces, and metrics all flow through the OpenTelemetry Collector to
-  Grafana-backed backends (Loki for logs, Jaeger for traces, Prometheus for
-  metrics).
+  Grafana-backed backends (Loki for logs, Tempo for traces per ADR-0006,
+  Prometheus for metrics).
 - Single UI (Grafana) for metrics, dashboards, and log querying.
 - Log-to-trace correlation possible via `traceID` label (to be demonstrated in
   F-013).
 
 ### Negative / trade-offs
-- Loki query language (LogQL) is distinct from PromQL and Jaeger query; the
+- Loki query language (LogQL) is distinct from PromQL and Tempo TraceQL; the
   developer must learn LogQL for log inspection (documented in runbooks).
 - trace-ID linking depends on the application including trace/span IDs in
   structured log fields (F-005/F-013); correlation is best-effort and gaps
