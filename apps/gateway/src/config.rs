@@ -28,6 +28,8 @@ impl Config {
     /// - `RENZU_LOG_LEVEL` (default `info`)
     /// - `RENZU_DATABASE_URL` (default `postgres://renzu:renzu@127.0.0.1:5432/renzu`, local-only)
     /// - `RENZU_ORDERS_URL` (default `http://orders:8081`, local-only)
+    /// - `RENZU_OTLP_ENDPOINT` (read by `Telemetry`, default
+    ///   `http://127.0.0.1:4318/v1/traces`)
     pub fn from_env() -> Result<Config, ConfigError> {
         let host = std::env::var("RENZU_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let port: u16 = std::env::var("RENZU_PORT")

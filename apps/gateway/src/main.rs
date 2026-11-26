@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let telemetry =
         Telemetry::init(&config.log_level).map_err(|e| format!("telemetry error: {e}"))?;
     tracing::info!(config = ?config, "starting gateway service");
-    let result = run(config).await;
+    let result = run(config, telemetry.clone()).await;
     telemetry.shutdown();
     result.map_err(|e| format!("server error: {e}"))?;
     Ok(())

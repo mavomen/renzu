@@ -365,7 +365,7 @@ async fn disable_database_connection(
     Json(serde_json::json!({ "fault": "database-connection", "enabled": false }))
 }
 
-pub async fn run(config: Config) -> Result<(), AppError> {
+pub async fn run(config: Config, telemetry: Telemetry) -> Result<(), AppError> {
     let addr: SocketAddr = config
         .bind_addr()
         .parse()
@@ -388,13 +388,10 @@ pub async fn run(config: Config) -> Result<(), AppError> {
         .map_err(|e| AppError::Internal(format!("orders client build failed: {e}")))?;
 
     let fault_state = Arc::new(FaultState::default());
-    let telemetry = crate::telemetry::Telemetry::init(&config.log_level)
-        .map_err(|e| AppError::Internal(format!("telemetry init error: {e}")))?;
-    let app = app(pool.clone(), orders_client, fault_state, telemetry.clone())
-        .layer(MetricsLayer::new(metrics));
+    let app =
+        app(pool.clone(), orders_client, fault_state, telemetry).layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
     let result = axum::serve(listener, app).await;
-    telemetry.shutdown();
     let _ = metrics_handle.shutdown();
     pool.close().await;
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;

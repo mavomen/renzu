@@ -1,0 +1,8 @@
+target/
+.git/
+.github/
+.kilo/
+reports/
+TODO.md
+AGENTS.md
+*.md

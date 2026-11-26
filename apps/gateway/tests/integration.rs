@@ -15,11 +15,25 @@ use sqlx::postgres::PgPoolOptions;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tower::ServiceExt;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt as _;
+
+static TELEMETRY_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static SHARED_TELEMETRY: OnceLock<Telemetry> = OnceLock::new();
+
+/// Serialize tests that mutate telemetry environment variables or install
+/// tracing subscribers; both are process-global.
+async fn telemetry_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    TELEMETRY_TEST_LOCK.lock().await
+}
+
+/// Synchronous counterpart for tests that do not run on a Tokio runtime.
+fn blocking_telemetry_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    TELEMETRY_TEST_LOCK.blocking_lock()
+}
 
 #[derive(Clone, Debug)]
 struct OtlpSpan {
@@ -54,6 +68,7 @@ fn any_value_to_string(value: &AnyValue) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn health_span_exported_to_otlp_receiver() {
+    let _guard = telemetry_test_guard().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test receiver should bind");
@@ -114,13 +129,13 @@ async fn health_span_exported_to_otlp_receiver() {
                 Err(_) => return,
             };
             let svc = service.clone();
-            if hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), svc)
-                .await
-                .is_err()
-            {
-                return;
-            }
+            // Each exporter keeps its connection alive, so serve connections
+            // concurrently or the log export cannot reach this receiver.
+            tokio::spawn(async move {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
         }
     });
 
@@ -130,7 +145,7 @@ async fn health_span_exported_to_otlp_receiver() {
     std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
     let telemetry = Telemetry::init("info").expect("telemetry should initialize");
 
-    let router = test_app();
+    let router = app_with_telemetry(telemetry.clone());
     let request = Request::builder()
         .uri("/health")
         .method("GET")
@@ -172,6 +187,7 @@ async fn health_span_exported_to_otlp_receiver() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn error_span_exported_to_otlp_receiver() {
+    let _guard = telemetry_test_guard().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test receiver should bind");
@@ -232,13 +248,13 @@ async fn error_span_exported_to_otlp_receiver() {
                 Err(_) => return,
             };
             let svc = service.clone();
-            if hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), svc)
-                .await
-                .is_err()
-            {
-                return;
-            }
+            // Each exporter keeps its connection alive, so serve connections
+            // concurrently or the log export cannot reach this receiver.
+            tokio::spawn(async move {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
         }
     });
 
@@ -248,7 +264,7 @@ async fn error_span_exported_to_otlp_receiver() {
     std::env::set_var("RENZU_OTLP_ENDPOINT", &endpoint);
     let telemetry = Telemetry::init("info").expect("telemetry should initialize");
 
-    let router = test_app();
+    let router = app_with_telemetry(telemetry.clone());
 
     // Enable controlled error fault so /order/123 returns 500.
     let fault_request = Request::builder()
@@ -309,6 +325,7 @@ async fn error_span_exported_to_otlp_receiver() {
 
 #[tokio::test]
 async fn health_endpoint_returns_healthy() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     let request = Request::builder()
         .uri("/health")
@@ -330,6 +347,7 @@ async fn health_endpoint_returns_healthy() {
 
 #[tokio::test]
 async fn ready_endpoint_returns_ready() {
+    let _guard = telemetry_test_guard().await;
     // Only assert "ready" when a real test database is available.
     // With a lazy pool (no DB), the endpoint returns "not ready" gracefully.
     if std::env::var("RENZU_TEST_DATABASE_URL").is_err() {
@@ -390,6 +408,7 @@ async fn ready_endpoint_returns_ready() {
 
 #[tokio::test]
 async fn root_endpoint_returns_metadata() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     let request = Request::builder()
         .uri("/")
@@ -411,6 +430,7 @@ async fn root_endpoint_returns_metadata() {
 
 #[tokio::test]
 async fn unknown_route_returns_not_found() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     let request = Request::builder()
         .uri("/no-such-route")
@@ -451,7 +471,27 @@ fn test_app_with_telemetry() -> (Router, Telemetry) {
 /// Uses `connect_lazy` so no real database connection is established;
 /// database-dependent endpoints will return "not ready" gracefully.
 fn test_app() -> Router {
-    test_app_with_telemetry().0
+    let telemetry = SHARED_TELEMETRY
+        .get_or_init(|| Telemetry::init("info").expect("telemetry init"))
+        .clone();
+    app_with_telemetry(telemetry)
+}
+
+/// Build a router using a caller-owned telemetry handle so the provider stays
+/// alive for the duration of a telemetry assertion.
+fn app_with_telemetry(telemetry: Telemetry) -> Router {
+    let pool = Arc::new(
+        PgPoolOptions::new()
+            .max_connections(1)
+            .connect_lazy("postgres://renzu:renzu@127.0.0.1:5432/renzu")
+            .expect("test database pool should be created"),
+    );
+    let orders_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(1))
+        .build()
+        .expect("orders client should be created");
+    let fault_state = Arc::new(gateway::server::FaultState::default());
+    gateway::server::app(pool, orders_client, fault_state, telemetry)
 }
 
 /// Collect an axum response body into bytes.
@@ -498,6 +538,7 @@ fn json_subscriber(captured: Arc<Mutex<Vec<u8>>>) -> impl tracing::Subscriber {
 
 #[test]
 fn redacted_value_emits_redacted() {
+    let _guard = blocking_telemetry_test_guard();
     let captured = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
     let subscriber = json_subscriber(captured);
@@ -533,6 +574,7 @@ fn redacted_value_emits_redacted() {
 
 #[test]
 fn log_events_carries_service_and_environment_fields() {
+    let _guard = blocking_telemetry_test_guard();
     let captured = Arc::new(Mutex::new(Vec::new()));
     let captured_clone = captured.clone();
     let subscriber = json_subscriber(captured);
@@ -557,6 +599,7 @@ fn log_events_carries_service_and_environment_fields() {
 
 #[tokio::test]
 async fn order_forward_returns_not_ready_when_orders_unavailable() {
+    let _guard = telemetry_test_guard().await;
     // With no orders service running, the /order/:id endpoint should return
     // an error (502) rather than crashing, demonstrating downstream failure
     // handling.
@@ -577,6 +620,7 @@ async fn order_forward_returns_not_ready_when_orders_unavailable() {
 
 #[tokio::test]
 async fn order_forward_propagates_traceparent() {
+    let _guard = telemetry_test_guard().await;
     // When a traceparent header is present, it should be forwarded to the
     // orders service. We verify the handler constructs the request correctly
     // by checking the response is an error (orders unavailable) but the
@@ -602,6 +646,7 @@ async fn order_forward_propagates_traceparent() {
 
 #[tokio::test]
 async fn enable_db_latency_fault() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     let request = Request::builder()
         .uri("/faults/database-latency")
@@ -623,6 +668,7 @@ async fn enable_db_latency_fault() {
 
 #[tokio::test]
 async fn disable_db_latency_fault() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     // First enable
     let request = Request::builder()
@@ -656,6 +702,7 @@ async fn disable_db_latency_fault() {
 
 #[tokio::test]
 async fn enable_controlled_error_fault() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     let request = Request::builder()
         .uri("/faults/controlled-error")
@@ -679,6 +726,7 @@ async fn enable_controlled_error_fault() {
 
 #[tokio::test]
 async fn controlled_error_returns_error_from_order() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     // Enable controlled error fault
     let request = Request::builder()
@@ -711,6 +759,7 @@ async fn controlled_error_returns_error_from_order() {
 
 #[tokio::test]
 async fn downstream_timeout_fault_toggle() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     // Enable
     let request = Request::builder()
@@ -740,6 +789,7 @@ async fn downstream_timeout_fault_toggle() {
 
 #[tokio::test]
 async fn otel_collector_fault_toggle() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     // Enable
     let request = Request::builder()
@@ -779,6 +829,7 @@ async fn otel_collector_fault_toggle() {
 
 #[tokio::test]
 async fn database_connection_fault_toggle() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     // Enable
     let request = Request::builder()
@@ -847,6 +898,7 @@ async fn database_connection_fault_toggle() {
 
 #[tokio::test]
 async fn root_endpoint_lists_new_fault_endpoints() {
+    let _guard = telemetry_test_guard().await;
     let router = test_app();
     let request = Request::builder()
         .uri("/")
@@ -881,6 +933,7 @@ async fn root_endpoint_lists_new_fault_endpoints() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn log_and_trace_share_trace_id() {
+    let _guard = telemetry_test_guard().await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("test receiver should bind");
@@ -970,13 +1023,13 @@ async fn log_and_trace_share_trace_id() {
                 Err(_) => return,
             };
             let svc = service.clone();
-            if hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), svc)
-                .await
-                .is_err()
-            {
-                return;
-            }
+            // Each exporter keeps its connection alive, so serve connections
+            // concurrently or the log export cannot reach this receiver.
+            tokio::spawn(async move {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), svc)
+                    .await;
+            });
         }
     });
 
