@@ -114,7 +114,9 @@ Dependencies: F-001.
 
 ### F-003: Local Infrastructure Orchestration
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
+
+**Reason for demotion:** No passing automated verification; e2e job fails on otel-collector/jaeger dependency; no test verifies health checks, startup dependencies, or shutdown behavior (see TODO.md V-04).
 
 **Objective:** Provide a repeatable local environment.
 
@@ -224,7 +226,9 @@ Dependencies: F-003, F-006.
 
 ### F-008: Distributed Trace Visualization
 
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
+
+**Reason for demotion:** Tempo provisioned but trace-visualization e2e unconfirmed; Jaeger-hardcoded references remain in loadgen.rs/report.rs (see TODO.md V-04).
 
 **Objective:** Inspect trace spans and operation timing.
 
@@ -480,7 +484,9 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
+
+**Reason for demotion:** Documentation-only; no automated test verifies the profiling workflow or results can be inspected (see TODO.md V-04).
 
 Scope:
 - Establish reproducible CPU profiling.

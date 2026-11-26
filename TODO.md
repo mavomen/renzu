@@ -10,16 +10,22 @@ task marked [BLOCKED] until its dependency is resolved.
   Run the last failing job, fix the failures, and make the required checks
   mandatory on the default branch. Nothing else is trustworthy until this lands.
   Files: .github/workflows/ci.yml, scripts/ci-local.sh.
-  Status: [DONE] — merged in PR #1. `checks` job passes (fmt/clippy/test). `e2e` job fails on pre-existing otel-collector/jaeger dependency; tracked separately.
+  Status: PARTIAL — `checks` job (fmt/clippy/test) passes locally: fmt PASS,
+  clippy -D warnings PASS, lib tests PASS (74). `e2e` job fails on pre-existing
+  otel-collector/jaeger dependency; integration tests hang (could not complete).
+  Tracked separately.
 
-- [x] **V-01: Verify F-013 claims end to end.**
+- [ ] **V-01: Verify F-013 claims end to end.**
   F-013 (Log Pipeline and Trace Correlation) is marked IN_PROGRESS. Verification results:
   - ✅ Loki provisioned in compose.yaml (grafana/loki:3.0.0)
   - ✅ Collector logs pipeline configured (otlp → batch → loki)
   - ✅ Grafana Loki datasource provisioned
   - ❌ Applications (gateway, orders) do NOT export OTLP logs — only stdout JSON
   - ❌ Trace/span ID correlation in logs not implemented
-  Status: [DONE] — F-013a (infrastructure) ready; F-013a (app export) and F-013b (correlation) outstanding. F-013-01 should be split per FEATURES.md proposal.
+  Status: PARTIAL — infrastructure provisioned (compose.yaml:93-113, config.yaml:56-59);
+  app OTLP log export and trace/span ID correlation NOT implemented despite
+  FEATURES.md F-013 claiming both exist. cc944e2 attribution removed
+  (cc944e2 does not touch apps/*/src/telemetry.rs).
 
 - [x] **F-013-02: Provision Loki end to end.**
   Infrastructure already provisioned (verified in V-01):
@@ -29,7 +35,8 @@ task marked [BLOCKED] until its dependency is resolved.
   Remaining work (split per FEATURES.md):
   - F-013a: Application OTLP log export (gateway/orders don't export OTLP logs)
   - F-013b: Trace/span ID correlation in logs
-  Status: [DONE] — infrastructure provisioned. App export and correlation tracked separately.
+  Status: PARTIAL — infrastructure provisioned. App export and correlation NOT
+  implemented despite FEATURES.md F-013 claiming both exist as DONE.
 
 - [x] **HEALTH-01: Fix the Collector healthcheck.**
   The current healthcheck runs `otelcol validate`, which proves the config
@@ -37,13 +44,19 @@ task marked [BLOCKED] until its dependency is resolved.
   health_check extension probing the pipeline, or assert on exporter
   metrics, so a broken pipeline cannot report healthy.
   Files: compose.yaml, deploy/otel-collector/config.yaml.
-  Status: [DONE] — depends on F-013-02.
+  Status: CONTRADICTED — compose.yaml:58-59 healthcheck runs `curl -f
+  http://localhost:13133/healthz`, but the collector image is distroless
+  (no curl); config.yaml:14-16 admits config validation is used instead of
+  pipeline probing. Does not prove pipeline exports. cc944e2 attribution
+  removed (cc944e2 touches compose.yaml resource limits; healthcheck predates cc944e2).
 
 - [x] **HEALTH-02: Make service readiness reflect exporter state.**
   Readiness must degrade (not lie) when telemetry export fails. Expose
   export-failure counters and fold them into /ready.
   Files: apps/*/src/telemetry.rs, apps/*/src/server.rs.
-  Status: [DONE].
+  Status: PARTIAL — server.rs:167-172 /ready degrades on telemetry.export_healthy()
+  (span failures only). Log-export failures not folded in; no exporter counters
+  exposed. cc944e2 attribution removed (cc944e2 does not touch these files).
 
 - [x] **CORR-01: Prove log/trace correlation with a test.**
   telemetry.rs documents trace_id/span_id correlation as a best-effort gap.
@@ -52,10 +65,13 @@ task marked [BLOCKED] until its dependency is resolved.
   asserts a log emitted inside a handler span carries the same trace ID as the
   Jaeger trace.
   Files: apps/*/src/telemetry.rs, tests/.
-  Status: [DONE] — both gateway and orders wire `OpenTelemetryTracingBridge` into
-  their tracing subscriber, export OTLP LogRecords via `SdkLoggerProvider`/
-  `SimpleLogProcessor`, and have `log_and_trace_share_trace_id` integration tests
-  asserting log `trace_id == span.trace_id`. Dependencies on F-013-02 satisfied.
+  Status: PARTIAL — both gateway and orders wire OpenTelemetryTracingBridge into
+  their tracing subscriber, export OTLP LogRecords via SdkLoggerProvider/
+  SimpleLogProcessor. `log_and_trace_share_trace_id` integration test exists at
+  apps/gateway/tests/integration.rs:882 asserting log trace_id == span.trace_id.
+  BUT integration test suite hangs (could not complete runtime verification);
+  test references Jaeger while stack is Tempo. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [x] **REPORT-01: Fill telemetry_references in experiment reports.**
   Reports now carry populated telemetry_references with deep links.
@@ -69,33 +85,40 @@ task marked [BLOCKED] until its dependency is resolved.
   - `main.rs:520-531` — CLI sets run_id, builds report, writes to disk
   - `report.rs:322-370, 410-429` — unit tests for schema_version, non-empty references, round-trip
   Files: apps/renzu/src/loadgen.rs, apps/renzu/src/report.rs, apps/renzu/src/main.rs.
-  Status: [DONE] — implementation complete, verified by cargo test --workspace --lib.
+  Status: PARTIAL — implementation complete and unit-tested (pass in lib). BUT
+  telemetry references hardcode Jaeger (`loadgen.rs:40-45`, `:59` → `:16686`)
+  while the stack is Tempo (ADR-0006). Jaeger-hardcoded references need updating
+  to Tempo/Grafana Explore.
 
 - [ ] **E2E-01: Add E2E suite for the observability tools.**
   Bring up the stack, run one scenario, and assert on each backend's API:
-  trace in Jaeger, metric in Prometheus, log in Loki, report written. Fast smoke
+  trace in Tempo, metric in Prometheus, log in Loki, report written. Fast smoke
   set on PR, slower set nightly.
   Files: tests/e2e/, scripts/, .github/workflows/ci.yml.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on F-013-02, HEALTH-01.
+  Status: NOT IMPLEMENTED — no `tests/e2e/` exists; cc944e2 touches no test files; dependency on otel-collector/jaeger remains unresolved.
 
 - [ ] **COMPOSE-01: Fix the stale compose.yaml header.**
   The header still says "No application services yet; the first Rust crate lands
   in F-004." Update it to reflect the current services.
   Files: compose.yaml.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— quick win, unblocks nothing.
+  Status: PARTIAL — header is current in compose.yaml but cannot confirm cc944e2 authored it; cc944e2 touches only compose.yaml (resource limits) + runbook.
 
 - [ ] **COMPOSE-02: Add resource limits to every container.**
   No container currently has CPU/memory limits. Add deploy.resources.limits to
   Compose and document approximate requirements.
   Files: compose.yaml, docs/runbooks/local-infrastructure.md.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — cc944e2 ("feat(compose): add resource limits to all services")
+  touches compose.yaml and docs/runbooks/local-infrastructure.md; deploy.resources.limits present on all 8 services in compose.yaml; runbook documents ~4.75 CPU / 4.5 GB RAM.
 
 - [ ] **COMPOSE-03: Make Postgres publication and Grafana credentials opt-in.**
   Postgres is published on 127.0.0.1:5432 with default credentials and Grafana
   ships admin/admin. Acceptable on loopback for a lab; make both opt-in for any
   shared environment.
   Files: compose.yaml.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: PARTIAL — compose.yaml:154-155 still defaults POSTGRES_USER/PASSWORD to renzu/renzu;
+  compose.yaml:125-126 still defaults GF_SECURITY_ADMIN_USER/PASSWORD to admin/admin.
+  Env-var overrides exist but defaults are not opt-in for shared environments.
+  cc944e2 attribution removed (cc944e2 touches compose.yaml resource limits + runbook only).
 
 ## Phase 2: Hardening (P1, target ~6-8 weeks)
 
@@ -106,28 +129,36 @@ task marked [BLOCKED] until its dependency is resolved.
   the system slow, which defeats the tool's purpose. Add a self-test stub
   service for deterministic validation.
   Files: apps/renzu/src/loadgen.rs.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: PARTIAL — loadgen.rs uses tokio::time::interval open-loop (:457), hdrhistogram (:381),
+  record_correct coordinated-omission (:483); BUT fault enable/disable still uses reqwest::blocking
+  plus Tokio Runtime (:317-340, comment :336 "blocking client unchanged"). Not fully async.
+  cc944e2 attribution removed (cc944e2 does not touch loadgen.rs).
 
 - [ ] **H-02: Authenticate /faults/* and add per-fault TTL auto-expiry.**
   Bearer token on the fault-control endpoints, per-fault TTL with automatic
   expiry, and an audit log of toggles. Auto-expiry is the dead-man's switch that
   stops a crashed runner leaving a fault active.
   Files: apps/gateway/src/server.rs, apps/renzu/src/scenarios/runner.rs.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — server.rs:100-118 fault endpoints have NO bearer auth,
+  NO per-fault TTL, NO audit log. Plain POST/DELETE to /faults/*. cc944e2
+  attribution removed (cc944e2 does not touch server.rs or runner.rs).
 
 - [ ] **H-03: Grafana annotations for experiment windows.**
   Have `renzu scenario run` call the Grafana annotations API at fault start and
   stop, tagged with the run ID and fault name, so every graph shows exactly when
   the fault was active and reports can link to a pre-set time range.
   Files: apps/renzu/src/scenarios/runner.rs, apps/renzu/src/report.rs.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — runner.rs contains no Grafana annotations API calls.
+  cc944e2 attribution removed (cc944e2 does not touch runner.rs or report.rs).
 
 - [ ] **H-04: Config layering.**
   Typed config struct; precedence defaults < file < env < CLI; validated at
   startup with actionable errors; documented schema. Add a `renzu config
   validate` command.
   Files: new config module, apps/renzu/src/, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — lib.rs Command enum has NO Config variant; no config
+  module exists; no `renzu config validate` command. cc944e2 attribution removed
+  (cc944e2 does not touch lib.rs).
 
 - [ ] **H-05: Secrets management.**
   No default credentials outside the local profile; secrets via env/file
@@ -135,41 +166,54 @@ task marked [BLOCKED] until its dependency is resolved.
   random credentials into a git-ignored .env on first `renzu up`. Add gitleaks
   to CI.
   Files: compose.yaml, .github/workflows/ci.yml, scripts/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — no .env generation exists; ci.yml has no gitleaks
+  step. cc944e2 attribution removed (cc944e2 does not touch ci.yml).
 
 - [ ] **H-06: Graceful shutdown.**
   SIGTERM drains in-flight requests (axum with_graceful_shutdown), then shuts
   down tracer/meter/logger providers with a bounded timeout and closes the DB
   pool. Separate liveness vs readiness.
   Files: apps/*/src/main.rs, apps/*/src/server.rs, apps/*/src/telemetry.rs.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — server.rs:368-401 run() uses axum::serve without
+  with_graceful_shutdown; no SIGTERM handling. main.rs:6-8 has no signal
+  handling. cc944e2 attribution removed (cc944e2 does not touch these files).
 
 - [ ] **H-07: Backpressure and limits.**
   Bounded queues everywhere; memory_limiter in the Collector; load-shedding
   (503 plus Retry-After) in services; CPU/memory limits on every container.
   Files: apps/*/src/server.rs, compose.yaml, deploy/otel-collector/config.yaml.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: PARTIAL — container resource limits exist on all services (COMPOSE-02 VERIFIED).
+  BUT Collector config.yaml has only `batch` processor — NO `memory_limiter`.
+  No 503 plus Retry-After load-shedding in server.rs. cc944e2 attribution removed
+  for the server.rs/config.yaml aspects (cc944e2 touches compose.yaml limits only).
 
 - [ ] **H-08: Observing Renzu itself.**
   Collector, Prometheus, Loki, Grafana and the CLI emit self-metrics; a "Renzu
   platform health" dashboard; meta-alerts (telemetry-silence dead-man's switch,
   exporter queue depth, scrape failures, ingestion errors).
   Files: deploy/prometheus/, deploy/grafana/, .github/workflows/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — no platform health dashboard or meta-alerts
+  (telemetry-silence, queue depth, scrape failures, ingestion errors) present
+  in deploy/prometheus/ or deploy/grafana/. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **H-09: Production-grade storage.**
   Jaeger on a persistent backend (Badger locally; Elasticsearch/OpenSearch or
   Tempo remotely) or migrate to Tempo. Prometheus retention and volume sizing
   documented. Loki on object storage in the remote profile.
   Files: compose.yaml, deploy/, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on the trace-backend ADR.
+  Status: VERIFIED — compose.yaml provisions Tempo with tempo_data volume;
+  Jaeger removed from stack; ADR-0006 Accepted → Tempo. cc944e2 attribution
+  removed (cc944e2 touches compose.yaml resource limits; Tempo migration predates cc944e2).
 
 - [ ] **H-10: Release engineering.**
   Signed, reproducible container images published to a registry; SBOM;
   cargo-dist or equivalent for the CLI; first tagged release (maintainer
   approval required).
   Files: .github/workflows/, Cargo.toml, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-04, H-05, H-06.
+  Status: NOT IMPLEMENTED — no SBOM, signed images, cargo-dist, or tagged
+  release. P-09 remains BLOCKED (maintainer decision required). cc944e2
+  attribution removed (cc944e2 does not touch these files).
 
 ## Phase 3: Production (next quarter after P1)
 
@@ -179,28 +223,40 @@ task marked [BLOCKED] until its dependency is resolved.
   environment-specific values in code. CLI --target flag with an explicit
   target registry, never free-form commands.
   Files: deploy/, apps/renzu/src/, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-04 and the orchestration ADR.
+  Status: NOT IMPLEMENTED — no deploy/k8s or Helm/Kustomize overlays; no
+  --target flag; no environment overlays. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **P-02: F-021 (Service-Level Indicators).**
   Define SLIs from OTel HTTP semantic conventions (request rate, error ratio,
   latency histogram) and ship as recording rules. Depends on a stable metrics
   path (ADR needed).
   Files: docs/FEATURES.md, deploy/prometheus/rules/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: PARTIAL — renzu sli CLI exists (lib.rs:107-127) with sli.rs unit tests
+  passing; SLIs computed from saved RunReport files. Prometheus recording rules
+  not verified present in deploy/prometheus/rules/. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **P-03: F-022 (SLO and error-budget reporting).**
   Split into (1) SLO definition files plus recording rules and burn-rate
   alerts, (2) per-experiment "budget consumed" in reports. Part 2 is the
   differentiator.
   Files: docs/FEATURES.md, deploy/prometheus/rules/, apps/renzu/src/report.rs.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on P-02.
+  Status: PARTIAL — renzu slo CLI exists (lib.rs:118-127) with slo.rs unit tests
+  passing; SLOs computed from saved RunReport files. Prometheus recording rules
+  not verified present in deploy/prometheus/rules/. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **P-04: F-026 (Resource and telemetry overhead analysis).**
   Measure instrumentation and Collector overhead (CPU, memory, latency delta with
   telemetry on/off/sampled). Publish methodology and raw data. This is exactly
   the kind of published benchmark that builds credibility.
   Files: docs/profiling.md, docs/FEATURES.md, tests/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-01.
+  Status: PARTIAL — renzu measure-overhead CLI exists (lib.rs:150-168) with
+  overhead.rs unit tests passing (/proc CPU/RSS delta). BUT telemetry on/off
+  comparison not implemented (FEATURES.md documents it as future work requiring
+  a service-side telemetry toggle). cc944e2 attribution removed (cc944e2 does
+  not touch these files).
 
 - [ ] **P-05: Prometheus and Grafana deep integration.**
   OTel semantic-convention naming; direct scraping alongside OTLP (restore the
@@ -209,7 +265,9 @@ task marked [BLOCKED] until its dependency is resolved.
   alerts; SLO recording via sloth/pyrra; exemplar storage; Grafana annotations
   (H-03) and log-to-trace/trace-to-metrics drill-downs.
   Files: deploy/prometheus/, deploy/grafana/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on the metrics-path ADR.
+  Status: PARTIAL — Prometheus + Grafana provisioned in compose.yaml; dashboards
+  dir exists. Recording/alerting rules, sloth/pyrra, exemplars not verified.
+  cc944e2 attribution removed (cc944e2 does not touch these files).
 
 - [ ] **P-06: Jaeger / Tempo decision and hardening.**
   Decide before investing in Jaeger storage tuning: stay on Jaeger (persistent
@@ -218,7 +276,9 @@ task marked [BLOCKED] until its dependency is resolved.
   under renzu.* namespace; service-graph and spanmetrics connectors to
   Prometheus.
   Files: deploy/, docs/decisions/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-09.
+  Status: VERIFIED — ADR-0006 Accepted → Tempo selected; compose.yaml uses
+  grafana/tempo:2.6.0; Collector config.yaml targets tempo:4318. cc944e2
+  attribution removed (cc944e2 predates or is unrelated to ADR-0006).
 
 - [ ] **P-07: Loki resilience and redaction.**
   Persistent sending_queue with file_storage; retry_on_failure with bounded
@@ -229,7 +289,10 @@ task marked [BLOCKED] until its dependency is resolved.
   structured metadata (Loki's OTLP ingestion stores it queryably without
   indexing).
   Files: deploy/otel-collector/config.yaml, deploy/loki/, tests/e2e/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on F-013-02.
+  Status: PARTIAL — Loki provisioned + collector logs pipeline exists
+  (config.yaml:56-59). BUT no sending_queue/file_storage, no redaction
+  processor, no E2E secret-in-Loki test. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **P-08: Additional DevOps integrations.**
   Mature, low-risk: cadvisor + node-exporter (resource/overhead analysis and
@@ -239,7 +302,9 @@ task marked [BLOCKED] until its dependency is resolved.
   cargo-deny, gitleaks, Trivy, SBOM). Deferred: Mimir/Thanos, Pyroscope/Parca,
   Elasticsearch/OpenSearch.
   Files: compose.yaml, deploy/, .github/workflows/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — no cadvisor/node-exporter/Alertmanager present;
+  ci.yml lacks cargo-deny/gitleaks/Trivy/SBOM. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **P-09: First tagged release (with maintainer approval).**
   Do not bump versions or cut releases without explicit approval. This task is
@@ -256,7 +321,8 @@ task marked [BLOCKED] until its dependency is resolved.
   shell strings, always argument arrays. Document that Compose is the supported
   local runtime. Blocks P-01.
   Files: apps/renzu/src/, docs/decisions/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — docs/decisions/0001-reference-recon.md exists, Status: Accepted.
+  cc944e2 attribution removed (cc944e2 does not touch docs/decisions/).
 
 - [ ] **ADR-02: Metrics path.**
   Collector export (:9464) vs Prometheus scraping vs both.
@@ -266,7 +332,8 @@ task marked [BLOCKED] until its dependency is resolved.
   scraping gives the `up` signal for free while the OTLP path does not.
   Blocks P-02, P-03, P-05.
   Files: deploy/prometheus/, docs/decisions/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — docs/decisions/0002-log-backend.md exists, Status: Accepted.
+  cc944e2 attribution removed (cc944e2 does not touch docs/decisions/).
 
 - [ ] **ADR-03: Report storage.**
   Per-run JSON files in ./reports/ vs something queryable.
@@ -274,21 +341,28 @@ task marked [BLOCKED] until its dependency is resolved.
   (schema in docs/); add an optional SQLite index later for comparison queries.
   Avoid a server database. Blocks REPORT-01, H-03.
   Files: apps/renzu/src/report.rs, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — docs/decisions/ exists with ADRs 0001-0006, all Status: Accepted.
+  cc944e2 attribution removed (cc944e2 does not touch docs/decisions/).
+  NOTE: TODO.md ADR numbering (01-06) does not match actual file names
+  (0001-reference-recon, 0002-log-backend, 0003-project-license,
+  0004-opentelemetry-rust-crates, 0005-opentelemetry-collector-pipeline,
+  0006-trace-backend); content topics are partially aligned but not 1:1.
 
 - [ ] **ADR-04: Minimum supported Rust toolchain.**
   Pin for CI and releases, and declare an explicit rust-version (MSRV) in
   Cargo.toml that is tested in one CI job. Decide whether library crates promise
   an MSRV or only the binary does. Blocks H-10.
   Files: Cargo.toml, rust-toolchain.toml, .github/workflows/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — docs/decisions/ exists with ADRs 0001-0006, all Status: Accepted.
+  cc944e2 attribution removed (cc944e2 does not touch docs/decisions/).
 
 - [ ] **ADR-05: Log pipeline.**
   Native OTLP logs vs file scraping (Fluent Bit/Vector).
   Recommendation: native OTLP from services; shipper-based collection only for
   third-party containers. Blocks F-013-02, P-07.
   Files: deploy/otel-collector/config.yaml, docs/decisions/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — docs/decisions/ exists with ADRs 0001-0006, all Status: Accepted.
+  cc944e2 attribution removed (cc944e2 does not touch docs/decisions/).
 
 - [ ] **ADR-06: Trace backend.**
   Stay on Jaeger vs move to Tempo.
@@ -296,7 +370,9 @@ task marked [BLOCKED] until its dependency is resolved.
   (object-storage-backed, TraceQL, tight Grafana integration) is the simpler
   path to a production trace backend. Blocks H-09, P-06.
   Files: compose.yaml, deploy/, docs/decisions/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: VERIFIED — docs/decisions/0006-trace-backend.md Accepted → Tempo;
+  compose.yaml uses grafana/tempo:2.6.0; Collector config.yaml targets tempo:4318.
+  cc944e2 attribution removed (cc944e2 does not touch docs/decisions/).
 
 ## Phase 4: Long pole (after P1 exits)
 
@@ -305,7 +381,8 @@ task marked [BLOCKED] until its dependency is resolved.
   linked from docs/FEATURES.md. Any feature without verification is demoted to
   IN_PROGRESS. Correct stale comments (e.g. the compose.yaml header).
   Files: docs/FEATURES.md, compose.yaml, tests/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— do this early; it gates trust in everything else.
+  Status: PARTIAL — do this early; it gates trust in everything else.
+  cc944e2 attribution removed (cc944e2 does not touch these files).
 
 - [ ] **L-02: Pluggable targets (bring your own service).**
   Define a "target" configuration: how to reach the service, which fault
@@ -317,7 +394,8 @@ task marked [BLOCKED] until its dependency is resolved.
   arbitrary services (sidecar or Kubernetes integration) — integrate with Chaos
   Mesh/LitmusChaos rather than rebuilding their fault catalogue.
   Files: apps/renzu/src/, new target crate, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— strategic hinge; do not start before P1 exits.
+  Status: NOT IMPLEMENTED — no target crate/sidecar; no fault-control API spec.
+  cc944e2 attribution removed (cc944e2 does not touch these files).
 
 - [ ] **L-03: F-025 (AI-assisted incident assistant), re-scoped.**
   A model reading a Renzu report plus linked traces and logs to suggest a
@@ -326,7 +404,11 @@ task marked [BLOCKED] until its dependency is resolved.
   start before reports contain real trace/log references (REPORT-01) or it will
   be guessing from summaries.
   Files: docs/FEATURES.md, new module.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on REPORT-01, P-01.
+  Status: VERIFIED — renzu diagnose CLI exists (lib.rs:142-148) with diagnose.rs
+  rule-based heuristics only, no model crate, never modifies environment; unit
+  tests pass in lib. Matches FEATURES.md F-025 description; TODO.md "optional
+  model plugin" description not present in code. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **L-04: F-024 (Trace-to-profile correlation), deferred.**
   Needs a profiler (Pyroscope/Parca) plus span-profile linking; high effort for
@@ -340,7 +422,9 @@ task marked [BLOCKED] until its dependency is resolved.
   publish the report with trace/log/metric links plus a written walkthrough.
   This single artifact is worth more than any feature list.
   Files: scenarios/, docs/experiments/, README.md.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— credibility milestone.
+  Status: NOT IMPLEMENTED — no published incident scenario; no docs/experiments/
+  walkthrough; README.md is 1 line (`# renzu`). cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 - [ ] **L-06: Repository discoverability and trust program.**
   Add a description, topics, a real README with a 60-second demo and
@@ -351,7 +435,9 @@ task marked [BLOCKED] until its dependency is resolved.
   stating the maintainer owns architectural decisions and significant changes
   start as an ADR proposal.
   Files: README.md, docs/, .github/, LICENSE.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — README.md is 1 line (`# renzu`); no LIMITATIONS.md,
+  SECURITY.md, or CONTRIBUTING.md present. cc944e2 attribution removed
+  (cc944e2 does not touch these files).
 
 ## Gaps & Verification
 
@@ -361,7 +447,12 @@ task marked [BLOCKED] until its dependency is resolved.
   `docker compose config` and by inspecting deploy/otel-collector/config.yaml
   before acting on F-013-01.
   Files: compose.yaml, deploy/otel-collector/config.yaml.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— quick diagnostic, unblocks F-013-01.
+  Status: PARTIAL — Loki IS provisioned (compose.yaml:93-113) and Collector
+  logs pipeline EXISTS (config.yaml:56-59), contradicting the claim "Loki is not
+  provisioned and the Collector has no logs pipeline." However app OTLP log
+  export and trace/span ID correlation are NOT implemented despite FEATURES.md
+  F-013 claiming both exist. cc944e2 attribution removed (cc944e2 does not
+  touch these files).
 
 - [x] **V-02: Verify gateway service wiring.**
   Gateway service IS in compose.yaml with all required environment variables:
@@ -369,7 +460,8 @@ task marked [BLOCKED] until its dependency is resolved.
   - RENZU_DATABASE_URL (postgres://renzu:renzu@postgres:5432/renzu)
   - RENZU_ORDERS_URL (http://orders:8081)
   - Depends on postgres and otel-collector health
-  Status: [DONE] — service correctly wired in current compose.yaml.
+  Status: VERIFIED — service correctly wired in current compose.yaml
+  (compose.yaml:200-224).
 
 - [x] **V-03: Verify orders service env wiring.**
   Orders service HAS required environment variables in compose.yaml:
@@ -377,7 +469,8 @@ task marked [BLOCKED] until its dependency is resolved.
   - RENZU_OTLP_ENDPOINT (http://otel-collector:4317/v1/traces)
   - Depends on otel-collector health
   Config reads host/port/log_level from env; telemetry reads OTLP endpoint directly.
-  Status: [DONE] — service correctly wired in current compose.yaml.
+  Status: VERIFIED — service correctly wired in current compose.yaml
+  (compose.yaml:172-193).
 
 - [x] **V-04: Audit every DONE feature for real verification.**
   Re-baseline audit (L-01) completed. Results:
@@ -406,14 +499,18 @@ task marked [BLOCKED] until its dependency is resolved.
   - F-008: Distributed Trace Visualization — depends on e2e trace visualization script which fails in CI (otel-collector dependency issue); no passing test verifies trace UI access
   - F-019: Profiling Workflow — documentation only; no automated test verifies profiling instructions work or results can be inspected
   
-  Status: [DONE] — Three features demoted to IN_PROGRESS: F-003, F-008, F-019. Updated FEATURES.md accordingly.
+  Status: PARTIAL — Three features demoted to IN_PROGRESS: F-003, F-008, F-019.
+  docs/FEATURES.md still marks all three DONE — reconcile statuses.
+  cc944e2 attribution removed (cc944e2 does not touch docs/FEATURES.md).
 
 - [ ] **V-05: Publish benchmark methodology.**
   Every benchmark in docs/profiling.md must state hardware, versions, workload
   shape (open-loop rate), warm-up, repetitions and raw data so others can
   reproduce it. Avoid single-run headline numbers.
   Files: docs/profiling.md, docs/FEATURES.md.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on P-04.
+  Status: NOT IMPLEMENTED — no docs/profiling.md benchmark methodology found;
+  no published benchmark data. cc944e2 attribution removed (cc944e2 does not
+  touch docs/profiling.md).
 
 - [ ] **V-06: Add a limitations page.**
   docs/LIMITATIONS.md stating what Renzu does not do: not a production
@@ -421,7 +518,8 @@ task marked [BLOCKED] until its dependency is resolved.
   only, no business-value workload, no autonomous remediation, no guaranteed
   cross-signal correlation.
   Files: docs/LIMITATIONS.md.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— quick win, high credibility value.
+  Status: NOT IMPLEMENTED — no docs/LIMITATIONS.md present. cc944e2 attribution
+  removed (cc944e2 does not touch docs/LIMITATIONS.md).
 
 - [ ] **V-07: Third-party license summary.**
   Record licenses for bundled configs and images. Grafana, Loki and Tempo are
@@ -429,14 +527,18 @@ task marked [BLOCKED] until its dependency is resolved.
   redistributing modified copies. Confirm with a lawyer if commercial use is
   planned.
   Files: LICENSE, docs/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: PARTIAL — LICENSE exists (MIT) and ADR-0003 (0003-project-license.md)
+  records the choice; however no third-party license summary document exists for
+  bundled images (Grafana/Loki/Tempo AGPL-3.0). cc944e2 attribution removed
+  (cc944e2 does not touch LICENSE or docs/).
 
 - [ ] **V-08: Security review of the fault API.**
   SECURITY.md with a reporting channel and a threat model for the fault API:
   who can call /faults/*, what can go wrong, blast radius, and how a crashed
   runner leaving a fault active is detected and recovered (H-02 TTL).
   Files: SECURITY.md, apps/gateway/src/server.rs.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on H-02.
+  Status: NOT IMPLEMENTED — no SECURITY.md present; no threat model for fault API.
+  cc944e2 attribution removed (cc944e2 does not touch these files).
 
 - [ ] **V-09: Competitive positioning note.**
   The closest comparison is the OpenTelemetry Demo (astronomy shop): far more
@@ -447,14 +549,18 @@ task marked [BLOCKED] until its dependency is resolved.
   and a small, readable Rust codebase teams can fork. Record this explicitly in
   docs/ so nobody oversells the project.
   Files: docs/, README.md.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).
+  Status: NOT IMPLEMENTED — no competitive positioning document; README.md is
+  1 line (`# renzu`). cc944e2 attribution removed (cc944e2 does not touch
+  docs/ or README.md).
 
 - [ ] **V-10: CI that proves things, not just builds.**
   Badges only for jobs that really gate. E2E tests asserting traces, metrics
   and logs actually arrive (E2E-01). Add a job that runs the E2E suite against
   a freshly built stack and fails the build if any assertion fails.
   Files: .github/workflows/ci.yml, tests/e2e/.
-  Status: [DONE] — committed on branch feat/compose-resource-limits (cc944e2).— depends on E2E-01.
+  Status: NOT IMPLEMENTED — no tests/e2e/ exists; ci.yml e2e job requires Docker
+  and depends on unresolved otel-collector/jaeger dependency; no E2E suite.
+  cc944e2 attribution removed (cc944e2 does not touch ci.yml).
 
 ## Ordering
 
