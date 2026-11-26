@@ -223,6 +223,30 @@ a matching run ID. The gateway exports metrics to the Collector through
 `RENZU_OTLP_METRICS_ENDPOINT`, which `compose.yaml` sets to the Collector's
 OTLP/HTTP receiver. The script exits 0 on success; compose is left running.
 
+### Incident investigation journey E2E
+
+```bash
+# Requires docker compose up -d (all services) to be running.
+./scripts/e2e-incident-journey.sh
+```
+
+This reproduces PRD Journey B. It runs a baseline load test and a `db-latency`
+load test against the gateway's `/ready` endpoint, where the 200 ms fault is
+injected. The script uses an isolated temporary reports directory and asserts:
+
+- both runs produce schema-v1 reports with the expected scenario names;
+- the faulted p95 latency exceeds the baseline by at least 150 ms;
+- `renzu compare` reports a positive p95 delta;
+- `/ready` latency returns to normal after fault cleanup;
+- a trace generated during the faulted workload is queryable in Tempo.
+
+The default load-test target (`/health`) does not inject latency, so the script
+passes `--url http://127.0.0.1:8080/ready` explicitly. `renzu compare` prints a
+compatibility warning because the scenario names differ; the delta is still
+meaningful. Report deep links are best-effort, so Tempo is queried by the
+faulted run's time window rather than by a client-generated trace ID. The script
+exits 0 on success; compose is left running.
+
 ## Batching
 
 Both pipelines use the `batch` processor with default settings (timeout and size).

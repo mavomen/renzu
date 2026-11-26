@@ -37,6 +37,9 @@ echo "==> running log/trace correlation E2E"
 echo "==> running metrics and report E2E"
 ./scripts/e2e-metrics-report.sh
 
+echo "==> running incident investigation journey E2E"
+./scripts/e2e-incident-journey.sh
+
 echo "==> stopping infrastructure"
 docker compose down -v
 
