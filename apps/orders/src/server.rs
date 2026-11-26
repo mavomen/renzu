@@ -20,6 +20,8 @@ struct HealthResponse {
 struct ReadyResponse {
     status: String,
     service: String,
+    span_export_failures: u64,
+    log_export_failures: u64,
 }
 
 pub fn app(telemetry: Telemetry) -> Router {
@@ -60,6 +62,8 @@ async fn ready(Extension(telemetry): Extension<Telemetry>) -> Json<ReadyResponse
     Json(ReadyResponse {
         status: status.to_string(),
         service: "orders".to_string(),
+        span_export_failures: telemetry.export_failures(),
+        log_export_failures: telemetry.log_export_failures(),
     })
 }
 
@@ -95,4 +99,24 @@ pub async fn run(config: Config, telemetry: Telemetry) -> Result<(), AppError> {
     let result = axum::serve(listener, app).await;
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ready_reports_log_export_failure() {
+        let Json(response) = ready(Extension(Telemetry::with_counters(0, 2))).await;
+
+        assert_eq!(response.status, "not ready");
+        assert_eq!(response.service, "orders");
+        assert_eq!(response.span_export_failures, 0);
+        assert_eq!(response.log_export_failures, 2);
+
+        let value = serde_json::to_value(&response).expect("response should serialize");
+        assert_eq!(value["status"], "not ready");
+        assert_eq!(value["span_export_failures"], 0);
+        assert_eq!(value["log_export_failures"], 2);
+    }
 }

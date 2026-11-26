@@ -102,6 +102,26 @@ Docker network DNS names; those ports are not published to the host.
 
 All healthchecks use `interval: 10s`, `timeout: 3s`, `retries: 3`, `start_period: 15s`.
 
+### Application readiness
+
+`GET /ready` on the gateway (`:8080`) and orders (`:8081`) reports `not ready`
+when telemetry export has failed. It checks both span and log export failures;
+the gateway also checks database connectivity and injected faults. The response
+includes cumulative counters:
+
+```json
+{
+  "status": "ready",
+  "service": "orders",
+  "span_export_failures": 0,
+  "log_export_failures": 0
+}
+```
+
+A non-zero counter remains until the process restarts, so `/ready` stays
+degraded after an export outage. Inspect `docker compose logs <service>` for
+`Export.Failed.Exhausted`, `BatchLogProcessor`, or `BatchSpanProcessor` warnings.
+
 Startup failures produce actionable diagnostics via `docker compose logs <service>`.
 
 ## Shutdown

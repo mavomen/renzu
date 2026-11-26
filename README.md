@@ -101,6 +101,25 @@ include best-effort Tempo API links for the slowest requests; the E2E script
 verifies traces independently through Tempo's search API because those links
 use client-generated IDs that are not guaranteed to resolve.
 
+### Readiness and telemetry export failures
+
+Both application services expose `/ready` for orchestration and troubleshooting.
+It reports `not ready` when the database is unreachable or when any span or log
+export has failed. The response also includes cumulative exporter failure
+counts:
+
+```json
+{
+  "status": "ready",
+  "service": "gateway",
+  "span_export_failures": 0,
+  "log_export_failures": 0
+}
+```
+
+The counters never reset while the process runs; a restart is required to clear
+them after a transient export outage.
+
 ## CLI workflow
 
 ```bash
