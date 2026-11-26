@@ -6,13 +6,13 @@
 
 ## Context
 
-PRD FR-03 and §8 (initial technology choices subject to verification) require a trace storage and query backend for M1. FEATURES.md F-008 scope: "Configure Jaeger or another explicitly approved trace backend." The current compose stack uses Jaeger all-in-one:1.58.0, and the Collector exports traces via `otlphttp` to `http://jaeger:4318`. This ADR records the formal decision with reasoning and rejected alternatives.
+PRD FR-03 and §8 (initial technology choices subject to verification) require a trace storage and query backend for M1. FEATURES.md F-008 scope: "Configure Tempo or another explicitly approved trace backend." The Compose stack now uses Tempo 2.6.0, and the Collector exports traces via `otlphttp` to `http://tempo:4318`. This ADR records the formal decision, reasoning, and rejected alternatives.
 
-This ADR blocks H-09 (production-grade storage) and P-06 (Jaeger/Tempo decision).
+This ADR resolves the trace backend question for H-09 (production-grade storage) and P-06 (Jaeger/Tempo decision).
 
 ## Candidates evaluated
 
-| Criterion | Jaeger (current) | Tempo |
+| Criterion | Jaeger (candidate) | Tempo (selected) |
 |---|---|---|
 | Image | jaegertracing/all-in-one:1.58.0 (pinned) | grafana/tempo:2.6.0 (pinned) |
 | OTLP receiver | 4317 gRPC, 4318 HTTP | 4318 HTTP |
@@ -53,7 +53,7 @@ This ADR blocks H-09 (production-grade storage) and P-06 (Jaeger/Tempo decision)
 
 - Developers familiar with Jaeger UI must learn Grafana Explore + TraceQL for trace inspection (documented in runbooks).
 - Tempo does not expose a standalone UI; trace inspection requires Grafana running (already required for metrics/logs).
-- Trace-to-logs correlation via traceID label (Loki) now works entirely within Grafana, but the linkage must be verified end-to-end (F-013).
+- Trace-to-logs correlation by trace ID in Loki now works entirely within Grafana, and the linkage is verified end to end by `scripts/e2e-log-trace-correlation.sh` (F-013).
 
 ### Risks
 
