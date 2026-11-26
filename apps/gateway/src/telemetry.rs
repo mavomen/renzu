@@ -4,17 +4,14 @@
 //! installs a `tracing-opentelemetry` layer into the global tracing subscriber.
 //! Export failures are logged to stderr and never fatal.
 //!
-//! Spans are exported through a [`BatchSpanProcessor`] (via
-//! `with_batch_exporter`), which runs exports on a background thread. This keeps
-//! the synchronous OTLP export off the async runtime -- the OTLP HTTP exporter
-//! performs blocking I/O and must not be invoked from within an asynchronous
-//! context.
+//! Spans and logs are exported through Tokio-backed batch processors. Exports
+//! run in the background so request handlers never block on OTLP I/O.
 //!
 //! Logs are emitted as OTLP LogRecords via `opentelemetry-appender-tracing`.
 //! The `OpenTelemetryTracingBridge` layer converts `tracing` events into OTLP
 //! log records, automatically attaching `trace_id`, `span_id`, and `trace_flags`
-//! from the current span context. Logs are exported through a
-//! [`SimpleLogProcessor`] to the same OTLP endpoint (logs path).
+//! from the current span context. Logs use the same OTLP endpoint with `/v1/logs`
+//! substituted for `/v1/traces`.
 //!
 //! Sensitive values can be redacted at the call site with [`Redacted`]:
 //! `tracing::info!(auth = %Redacted(&token), "authenticating")` renders

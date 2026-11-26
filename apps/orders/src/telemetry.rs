@@ -6,10 +6,8 @@
 //! into the global tracing subscriber. Export failures are logged to stderr and
 //! never fatal.
 //!
-//! Spans are exported through a [`BatchSpanProcessor`] (via
-//! `with_batch_exporter`). Logs are emitted as OTLP LogRecords via
-//! `opentelemetry-appender-tracing` and exported through a
-//! [`SimpleLogProcessor`]. Both run on background threads.
+//! Spans and logs are exported through Tokio-backed batch processors. Exports
+//! run in the background so request handlers never block on OTLP I/O.
 
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;

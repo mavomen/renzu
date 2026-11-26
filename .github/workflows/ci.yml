@@ -61,6 +61,9 @@ jobs:
       - name: Run trace visualization E2E
         run: ./scripts/e2e-trace-visualization.sh
 
+      - name: Run log/trace correlation E2E
+        run: ./scripts/e2e-log-trace-correlation.sh
+
       - name: Stop local infrastructure
         run: docker compose down -v
         if: always()

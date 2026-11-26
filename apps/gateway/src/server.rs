@@ -223,6 +223,7 @@ async fn order_forward(
 ) -> Result<axum::Json<serde_json::Value>, AppError> {
     let span = Span::current();
     span.record("order.id", &id);
+    tracing::info!(route = "/order/:id", order_id = %id, "order lookup requested");
 
     // Inject controlled error if enabled.
     if fault_state.is_controlled_error_enabled() {
