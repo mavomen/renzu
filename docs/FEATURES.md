@@ -228,9 +228,9 @@ Dependencies: F-003, F-006.
 
 ### F-008: Distributed Trace Visualization
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE`
 
-**Reason for remaining IN_PROGRESS:** `scripts/e2e-trace-visualization.sh` now passes locally against Tempo, and report deep links use Tempo/Grafana instead of Jaeger. CI has not yet been observed green with the rebuilt stack, so confirmation is still pending.
+**Verification evidence:** `scripts/e2e-trace-visualization.sh` runs in the CI e2e job, which is green on `develop`. It submits an OTLP trace to Tempo and asserts that the trace is retrievable with a named span, kind, and positive duration. Grafana provisions the Tempo datasource, and experiment reports use Tempo/Grafana links.
 
 **Objective:** Inspect trace spans and operation timing.
 
