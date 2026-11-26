@@ -22,13 +22,6 @@ info() {
     echo "==> $*"
 }
 
-# Cleanup function - ensures compose is down on exit
-cleanup() {
-    info "cleaning up: stopping docker compose"
-    docker compose -f "${COMPOSE_FILE}" down -v 2>/dev/null || true
-}
-trap cleanup EXIT
-
 # Wait for a service port to be available
 wait_for_service_port() {
     local service="$1"
@@ -161,7 +154,8 @@ main() {
     info "restarting infrastructure for subsequent tests"
     docker compose -f "${COMPOSE_FILE}" up -d
     check_all_healthy || fail "services did not become healthy after restart"
-    
+
+    info "infrastructure left running for subsequent E2E tests"
     info "ALL INFRASTRUCTURE VERIFICATIONS PASSED"
 }
 

@@ -35,6 +35,7 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     needs: checks
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,7 +46,7 @@ jobs:
       - name: Wait for services to be healthy
         run: |
           for i in $(seq 1 60); do
-            if docker compose ps --format json | jq -r '.State' | grep -q "healthy" && ! docker compose ps --format json | jq -r '.State' | grep -Eq "unhealthy|starting"; then
+            if docker compose ps --format json | jq -s -e 'length > 0 and all(.[]; .Health == "healthy")' >/dev/null; then
               echo "services healthy"
               exit 0
             fi
@@ -63,6 +64,12 @@ jobs:
 
       - name: Run log/trace correlation E2E
         run: ./scripts/e2e-log-trace-correlation.sh
+
+      - name: Dump compose diagnostics
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail=200
 
       - name: Stop local infrastructure
         run: docker compose down -v

@@ -18,7 +18,7 @@ docker compose up -d
 
 echo "==> waiting for services to be healthy"
 for i in $(seq 1 60); do
-    if docker compose ps --format json | jq -r '.State' | grep -q "healthy" && ! docker compose ps --format json | jq -r '.State' | grep -Eq "unhealthy|starting"; then
+    if docker compose ps --format json | jq -s -e 'length > 0 and all(.[]; .Health == "healthy")' >/dev/null; then
         echo "services healthy"
         break
     fi
@@ -30,6 +30,9 @@ echo "==> running infrastructure verification"
 
 echo "==> running trace visualization E2E"
 ./scripts/e2e-trace-visualization.sh
+
+echo "==> running log/trace correlation E2E"
+./scripts/e2e-log-trace-correlation.sh
 
 echo "==> stopping infrastructure"
 docker compose down -v
