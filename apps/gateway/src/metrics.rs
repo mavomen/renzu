@@ -20,8 +20,9 @@ use opentelemetry::metrics::{Counter, Histogram, MeterProvider as _};
 use opentelemetry::KeyValue;
 use opentelemetry_otlp::MetricExporter;
 use opentelemetry_otlp::WithExportConfig as _;
-use opentelemetry_sdk::metrics::PeriodicReader;
+use opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader;
 use opentelemetry_sdk::metrics::SdkMeterProvider;
+use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::Resource;
 use std::fmt;
 use std::future::Future;
@@ -60,7 +61,10 @@ impl Metrics {
             .build()
             .map_err(|e| format!("failed to build OTLP metrics exporter: {e}"))?;
 
-        let reader = PeriodicReader::builder(exporter)
+        // The OTLP HTTP exporter uses reqwest, which needs a Tokio reactor.
+        // The default PeriodicReader spawns a plain OS thread and panics when
+        // the exporter polls; the async-runtime reader spawns on Tokio instead.
+        let reader = PeriodicReader::builder(exporter, Tokio)
             .with_interval(DEFAULT_EXPORT_INTERVAL)
             .build();
 
@@ -257,13 +261,13 @@ mod tests {
 
     fn test_metrics_and_exporter() -> (Metrics, InMemoryMetricExporter) {
         let exporter = InMemoryMetricExporter::default();
-        let reader = PeriodicReader::builder(exporter.clone()).build();
+        let reader = PeriodicReader::builder(exporter.clone(), Tokio).build();
         let metrics = Metrics::with_reader(reader);
         (metrics, exporter)
     }
 
-    #[test]
-    fn record_request_counts_and_errors() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn record_request_counts_and_errors() {
         let (metrics, exporter) = test_metrics_and_exporter();
 
         metrics.record_request("GET", 200, Duration::from_millis(50));
@@ -318,8 +322,8 @@ mod tests {
         assert_eq!(duration_count, 3, "expected 3 duration observations");
     }
 
-    #[test]
-    fn labels_are_low_cardinality() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn labels_are_low_cardinality() {
         let (metrics, _exporter) = test_metrics_and_exporter();
         // Calling with a variety of status codes and methods must not panic and
         // must not produce high-cardinality label values (full URLs, IDs).

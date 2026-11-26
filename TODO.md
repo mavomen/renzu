@@ -7,118 +7,58 @@ task marked [BLOCKED] until its dependency is resolved.
 ## Phase 1: Quick wins (this sprint)
 
 - [x] **CI-01: Get CI green and enforce required checks.**
-  Run the last failing job, fix the failures, and make the required checks
-  mandatory on the default branch. Nothing else is trustworthy until this lands.
-  Files: .github/workflows/ci.yml, scripts/ci-local.sh.
-  Status: PARTIAL — `checks` job (fmt/clippy/test) passes locally: fmt PASS,
-  clippy -D warnings PASS, lib tests PASS (74). `e2e` job fails on pre-existing
-  otel-collector/jaeger dependency; integration tests hang (could not complete).
-  Tracked separately.
+  Status: DONE — `develop` CI run `45843670270` passed both `checks` and
+  `e2e`. Required checks are enforced on `develop` and `main`.
 
-- [ ] **V-01: Verify F-013 claims end to end.**
-  F-013 (Log Pipeline and Trace Correlation) is marked IN_PROGRESS. Verification results:
-  - ✅ Loki provisioned in compose.yaml (grafana/loki:3.0.0)
-  - ✅ Collector logs pipeline configured (otlp → batch → loki)
-  - ✅ Grafana Loki datasource provisioned
-  - ❌ Applications (gateway, orders) do NOT export OTLP logs — only stdout JSON
-  - ❌ Trace/span ID correlation in logs not implemented
-  Status: PARTIAL — infrastructure provisioned (compose.yaml:93-113, config.yaml:56-59);
-  app OTLP log export and trace/span ID correlation NOT implemented despite
-  FEATURES.md F-013 claiming both exist. cc944e2 attribution removed
-  (cc944e2 does not touch apps/*/src/telemetry.rs).
+- [x] **V-01: Verify F-013 claims end to end.**
+  F-013 is DONE. Both services export OTLP logs with trace IDs, integration
+  tests pass, and `scripts/e2e-log-trace-correlation.sh` proves Loki → Tempo
+  correlation in CI.
+  Status: DONE — the stale claim that applications do not export logs is
+  resolved.
 
 - [x] **F-013-02: Provision Loki end to end.**
-  Infrastructure already provisioned (verified in V-01):
-  - ✅ Loki 3.x service in compose.yaml (grafana/loki:3.0.0)
-  - ✅ Collector logs pipeline (otlp → batch → loki)
-  - ✅ Grafana Loki datasource provisioned
-  Remaining work (split per FEATURES.md):
-  - F-013a: Application OTLP log export (gateway/orders don't export OTLP logs)
-  - F-013b: Trace/span ID correlation in logs
-  Status: PARTIAL — infrastructure provisioned. App export and correlation NOT
-  implemented despite FEATURES.md F-013 claiming both exist as DONE.
+  Status: DONE — Loki, the Collector logs pipeline, the Grafana datasource,
+  and the log/trace E2E proof are in place.
 
 - [x] **HEALTH-01: Fix the Collector healthcheck.**
-  The current healthcheck runs `otelcol validate`, which proves the config
-  parses, not that the pipeline exports. Replace it with the Collector's
-  health_check extension probing the pipeline, or assert on exporter
-  metrics, so a broken pipeline cannot report healthy.
-  Files: compose.yaml, deploy/otel-collector/config.yaml.
-  Status: CONTRADICTED — compose.yaml:58-59 healthcheck runs `curl -f
-  http://localhost:13133/healthz`, but the collector image is distroless
-  (no curl); config.yaml:14-16 admits config validation is used instead of
-  pipeline probing. Does not prove pipeline exports. cc944e2 attribution
-  removed (cc944e2 touches compose.yaml resource limits; healthcheck predates cc944e2).
+  Status: DONE — the Collector image includes `curl`, the `health_check`
+  extension probes the pipeline, and Compose probes `/healthz`.
 
-- [x] **HEALTH-02: Make service readiness reflect exporter state.**
-  Readiness must degrade (not lie) when telemetry export fails. Expose
-  export-failure counters and fold them into /ready.
-  Files: apps/*/src/telemetry.rs, apps/*/src/server.rs.
-  Status: PARTIAL — server.rs:167-172 /ready degrades on telemetry.export_healthy()
-  (span failures only). Log-export failures not folded in; no exporter counters
-  exposed. cc944e2 attribution removed (cc944e2 does not touch these files).
+- [ ] **HEALTH-02: Make service readiness reflect exporter state.**
+  Status: PARTIAL — `/ready` degrades on span export failures and database
+  health. Log export failures are counted in telemetry but are not yet folded
+  into `/ready`, and exporter counters are not exposed as a metric endpoint.
 
 - [x] **CORR-01: Prove log/trace correlation with a test.**
-  telemetry.rs documents trace_id/span_id correlation as a best-effort gap.
-  Prefer the OpenTelemetry log bridge (opentelemetry-appender-tracing) so logs
-  leave as OTLP LogRecords carrying native trace and span IDs. Add a test that
-  asserts a log emitted inside a handler span carries the same trace ID as the
-  Jaeger trace.
-  Files: apps/*/src/telemetry.rs, tests/.
-  Status: PARTIAL — both gateway and orders wire OpenTelemetryTracingBridge into
-  their tracing subscriber, export OTLP LogRecords via SdkLoggerProvider/
-  SimpleLogProcessor. `log_and_trace_share_trace_id` integration test exists at
-  apps/gateway/tests/integration.rs:882 asserting log trace_id == span.trace_id.
-  BUT integration test suite hangs (could not complete runtime verification);
-  test references Jaeger while stack is Tempo. cc944e2 attribution removed
-  (cc944e2 does not touch these files).
+  Status: DONE — `log_and_trace_share_trace_id` passes in both services and
+  the E2E correlation script is green in CI. Tempo replaced Jaeger references.
 
 - [x] **REPORT-01: Fill telemetry_references in experiment reports.**
-  Reports now carry populated telemetry_references with deep links.
-  - `loadgen.rs:67-76` — `generate_traceparent()` mints W3C traceparent (`00-<trace>-<span>-01`, force sampling) per request
-  - `loadgen.rs:88-121` — `select_telemetry_references()` selects error trace IDs + slowest 5, deduplicates, builds Jaeger (`/trace/<id>`) + Grafana Explore URLs
-  - `loadgen.rs:180` — `LoadTestResult.telemetry_references: Vec<String>` populated via `select_telemetry_references(&trace_records)`
-  - `report.rs:67` — `REPORT_SCHEMA_VERSION: u32 = 1`
-  - `report.rs:83` — `RunReport.schema_version: u32` field
-  - `report.rs:205` — `telemetry_references: result.telemetry_references.clone()` populated from load test result
-  - `report.rs:192-194` — warning about missing telemetry only fires when references empty (conditional, not hardcoded)
-  - `main.rs:520-531` — CLI sets run_id, builds report, writes to disk
-  - `report.rs:322-370, 410-429` — unit tests for schema_version, non-empty references, round-trip
-  Files: apps/renzu/src/loadgen.rs, apps/renzu/src/report.rs, apps/renzu/src/main.rs.
-  Status: PARTIAL — implementation complete and unit-tested (pass in lib). BUT
-  telemetry references hardcode Jaeger (`loadgen.rs:40-45`, `:59` → `:16686`)
-  while the stack is Tempo (ADR-0006). Jaeger-hardcoded references need updating
-  to Tempo/Grafana Explore.
+  Status: DONE — reports carry schema v1 and Tempo/Grafana deep links. The
+  best-effort propagator limitation is documented in `README.md`.
 
-- [ ] **E2E-01: Add E2E suite for the observability tools.**
+- [ ] **E2E-01: Complete observability E2E proof.**
   Bring up the stack, run one scenario, and assert on each backend's API:
   trace in Tempo, metric in Prometheus, log in Loki, report written. Fast smoke
   set on PR, slower set nightly.
-  Files: tests/e2e/, scripts/, .github/workflows/ci.yml.
-  Status: NOT IMPLEMENTED — no `tests/e2e/` exists; cc944e2 touches no test files; dependency on otel-collector/jaeger remains unresolved.
+  Files: `scripts/`, `.github/workflows/ci.yml`, `README.md`, runbook.
+  Status: PARTIAL — all four backend assertions are implemented and run in CI
+  (`e2e-metrics-report.sh` adds the Prometheus counter and saved-report checks).
+  A local metrics-exporter bug was found and fixed: the default PeriodicReader
+  panicked without a Tokio reactor; the gateway now uses the async-runtime reader.
+  Nightly split remains deferred until MVP acceptance.
 
-- [ ] **COMPOSE-01: Fix the stale compose.yaml header.**
-  The header still says "No application services yet; the first Rust crate lands
-  in F-004." Update it to reflect the current services.
-  Files: compose.yaml.
-  Status: PARTIAL — header is current in compose.yaml but cannot confirm cc944e2 authored it; cc944e2 touches only compose.yaml (resource limits) + runbook.
+- [x] **COMPOSE-01: Fix the stale compose.yaml header.**
+  Status: DONE — the header lists the current services.
 
-- [ ] **COMPOSE-02: Add resource limits to every container.**
-  No container currently has CPU/memory limits. Add deploy.resources.limits to
-  Compose and document approximate requirements.
-  Files: compose.yaml, docs/runbooks/local-infrastructure.md.
-  Status: VERIFIED — cc944e2 ("feat(compose): add resource limits to all services")
-  touches compose.yaml and docs/runbooks/local-infrastructure.md; deploy.resources.limits present on all 8 services in compose.yaml; runbook documents ~4.75 CPU / 4.5 GB RAM.
+- [x] **COMPOSE-02: Add resource limits to every container.**
+  Status: DONE — all eight services have `deploy.resources.limits` and the
+  runbook documents the total.
 
 - [ ] **COMPOSE-03: Make Postgres publication and Grafana credentials opt-in.**
-  Postgres is published on 127.0.0.1:5432 with default credentials and Grafana
-  ships admin/admin. Acceptable on loopback for a lab; make both opt-in for any
-  shared environment.
-  Files: compose.yaml.
-  Status: PARTIAL — compose.yaml:154-155 still defaults POSTGRES_USER/PASSWORD to renzu/renzu;
-  compose.yaml:125-126 still defaults GF_SECURITY_ADMIN_USER/PASSWORD to admin/admin.
-  Env-var overrides exist but defaults are not opt-in for shared environments.
-  cc944e2 attribution removed (cc944e2 touches compose.yaml resource limits + runbook only).
+  Status: PARTIAL — defaults remain `renzu`/`renzu` and `admin`/`admin` for
+  loopback use; environment overrides exist and are documented as local-only.
 
 ## Phase 2: Hardening (P1, target ~6-8 weeks)
 

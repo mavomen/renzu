@@ -209,6 +209,20 @@ In Grafana, the Loki data source provisions a derived field named `TraceID` for
 log lines containing `"traceid":"<id>"`. Selecting that link opens the trace in
 the provisioned Tempo data source.
 
+### Metrics and report E2E
+
+```bash
+# Requires docker compose up -d (all services) to be running.
+./scripts/e2e-metrics-report.sh
+```
+
+This generates gateway traffic, polls the Prometheus API until
+`renzu_http_requests_total` is queryable with a positive value, runs a short
+baseline load test, and asserts the saved JSON report exists with schema v1 and
+a matching run ID. The gateway exports metrics to the Collector through
+`RENZU_OTLP_METRICS_ENDPOINT`, which `compose.yaml` sets to the Collector's
+OTLP/HTTP receiver. The script exits 0 on success; compose is left running.
+
 ## Batching
 
 Both pipelines use the `batch` processor with default settings (timeout and size).

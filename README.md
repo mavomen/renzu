@@ -63,12 +63,15 @@ With the stack running:
 ./scripts/verify-infrastructure.sh        # health, startup/shutdown behavior
 ./scripts/e2e-trace-visualization.sh      # synthetic trace is queryable in Tempo
 ./scripts/e2e-log-trace-correlation.sh    # real request: Loki log -> Tempo trace
+./scripts/e2e-metrics-report.sh           # Prometheus counter + saved JSON report
 ```
 
 The correlation script sends `GET /order/<unique-id>` to the gateway, finds the
 matching application log in Loki, reads its `traceid`, and asserts that Tempo
-returns the same trace with a span for that order. All scripts leave Compose
-running.
+returns the same trace with a span for that order. The metrics script generates
+gateway traffic, asserts that `renzu_http_requests_total` is queryable in
+Prometheus, runs a short baseline load test, and checks the saved report. All
+scripts leave Compose running.
 
 ## CLI workflow
 
@@ -95,6 +98,7 @@ link may not resolve to a service span. Set `RENZU_TEMPO_URL` and
 | Variable | Used by | Default | Purpose |
 |---|---|---|---|
 | `RENZU_OTLP_ENDPOINT` | gateway, orders | `http://127.0.0.1:4318/v1/traces` | Collector OTLP/HTTP base; `/v1/logs` is derived from it |
+| `RENZU_OTLP_METRICS_ENDPOINT` | gateway | `http://127.0.0.1:4318/v1/metrics` | Collector OTLP/HTTP metrics receiver |
 | `RENZU_LOG_LEVEL` | gateway, orders | `info` | `tracing` filter |
 | `RENZU_ENVIRONMENT` | gateway, orders | `local` | Resource attribute |
 | `GF_SECURITY_ADMIN_USER` | Grafana | `admin` | Local-only default; override off loopback |

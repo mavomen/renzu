@@ -65,6 +65,9 @@ jobs:
       - name: Run log/trace correlation E2E
         run: ./scripts/e2e-log-trace-correlation.sh
 
+      - name: Run metrics and report E2E
+        run: ./scripts/e2e-metrics-report.sh
+
       - name: Dump compose diagnostics
         if: failure()
         run: |
