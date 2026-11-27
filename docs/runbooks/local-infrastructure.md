@@ -19,26 +19,45 @@ Image tags are pinned explicitly (no `:latest`) (PRD NFR-01).
 
 ## Credentials and opt-in configuration
 
+The base `compose.yaml` is secure by default: Grafana credentials must come
+from the environment and PostgreSQL has no published host port. Local
+convenience is an explicit opt-in.
+
 ### Grafana admin credentials
 
-Grafana admin credentials are configurable via environment variables:
+Grafana admin credentials are required by `compose.yaml`:
 
-| Variable | Default | Notes |
-|----------|---------|-------|
-| `GF_SECURITY_ADMIN_USER` | `admin` | Local-only default (PRD NFR-04). **Must be overridden in shared environments.** |
-| `GF_SECURITY_ADMIN_PASSWORD` | `admin` | Local-only default (PRD NFR-04). **Must be overridden in shared environments.** |
+| Variable | Required value | Notes |
+|----------|----------------|-------|
+| `GF_SECURITY_ADMIN_USER` | caller-supplied | No default in the base Compose file |
+| `GF_SECURITY_ADMIN_PASSWORD` | caller-supplied | No default in the base Compose file |
 
-Override at startup:
+For the loopback-only lab, opt in with the example values:
 
 ```bash
-GF_SECURITY_ADMIN_USER=myadmin GF_SECURITY_ADMIN_PASSWORD=secret docker compose up -d
+cp .env.example .env
+docker compose -f compose.yaml -f compose.local.yaml up -d
 ```
+
+The example values are `admin` / `admin`, documented as local-only. `.env` is
+ignored by Git. Outside the local lab, provide different values through the
+environment or a secret manager.
 
 ### PostgreSQL host port publication
 
-PostgreSQL port 5432 is published to `127.0.0.1:5432` by default for local development convenience. This is bound to loopback only (PRD NFR-04).
+The base Compose file does not publish PostgreSQL to the host. Inter-service
+communication uses Docker network DNS (`postgres:5432`) and is unaffected.
 
-For shared or production-like environments, disable host port publication by removing the `ports` block from the `postgres` service in `compose.yaml` (or via a Compose override file). Inter-service communication uses Docker network DNS (`postgres:5432`) and is unaffected.
+For local host-side inspection, opt in with `compose.local.yaml`:
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up -d
+```
+
+That overlay publishes `127.0.0.1:5432:5432` (PRD NFR-04). If another service
+occupies that host port, add an untracked override after the local overlay to
+map a different host port, for example `15432:5432`. The proof scripts accept
+that file through `RENZU_COMPOSE_OVERRIDE`.
 
 ## Prerequisites
 
@@ -50,7 +69,7 @@ For shared or production-like environments, disable host port publication by rem
 ## Startup
 
 ```bash
-docker compose up -d
+docker compose -f compose.yaml -f compose.local.yaml up -d
 ```
 
 Startup order is enforced via `depends_on` with `condition: service_healthy`:
@@ -61,7 +80,7 @@ Startup order is enforced via `depends_on` with `condition: service_healthy`:
 - Gateway waits for Postgres and Collector.
 
 ```bash
-docker compose ps
+docker compose -f compose.yaml -f compose.local.yaml ps
 ```
 
 Expected output: all eight services report `healthy`.
@@ -80,7 +99,7 @@ All published ports are bound to `127.0.0.1` only (PRD NFR-04).
 | Prometheus | 127.0.0.1:9090 | 9090 | Prometheus query UI + API |
 | Loki | 127.0.0.1:3100 | 3100 | Loki HTTP API |
 | Grafana | 127.0.0.1:3000 | 3000 | Grafana UI |
-| PostgreSQL | 127.0.0.1:5432 | 5432 | PostgreSQL (local dev only; disable for shared envs) |
+| PostgreSQL | 127.0.0.1:5432 (opt-in overlay) | 5432 | PostgreSQL host-side inspection; not published by base Compose |
 | Orders | 127.0.0.1:8081 | 8081 | Orders HTTP API |
 | Gateway | 127.0.0.1:8080 | 8080 | Gateway HTTP API |
 
@@ -119,7 +138,8 @@ includes cumulative counters:
 ```
 
 A non-zero counter remains until the process restarts, so `/ready` stays
-degraded after an export outage. Inspect `docker compose logs <service>` for
+degraded after an export outage. Inspect
+`docker compose -f compose.yaml -f compose.local.yaml logs <service>` for
 `Export.Failed.Exhausted`, `BatchLogProcessor`, or `BatchSpanProcessor` warnings.
 
 Startup failures produce actionable diagnostics via `docker compose logs <service>`.
@@ -127,11 +147,11 @@ Startup failures produce actionable diagnostics via `docker compose logs <servic
 ## Shutdown
 
 ```bash
-docker compose down
+docker compose -f compose.yaml -f compose.local.yaml down
 ```
 
 Removes the containers and the network. Named volumes (`postgres_data`, `loki_data`, `tempo_data`)
-are preserved; run `docker compose down -v` to remove them.
+are preserved; add `-v` to remove them.
 
 Verify no leftover project-owned containers:
 
@@ -204,7 +224,7 @@ Once the gateway has been exercised against the Collector (for example via
 Automated verification:
 
 ```bash
-# Requires docker compose up -d (all services) to be running.
+# Requires the local opt-in Compose stack to be running.
 ./scripts/e2e-trace-visualization.sh
 ```
 
@@ -215,7 +235,7 @@ It exits 0 on success; compose is left running.
 ### Log/trace correlation E2E (F-013)
 
 ```bash
-# Requires docker compose up -d (all services) to be running.
+# Requires the local opt-in Compose stack to be running.
 ./scripts/e2e-log-trace-correlation.sh
 ```
 
@@ -232,7 +252,7 @@ the provisioned Tempo data source.
 ### Metrics and report E2E
 
 ```bash
-# Requires docker compose up -d (all services) to be running.
+# Requires the local opt-in Compose stack to be running.
 ./scripts/e2e-metrics-report.sh
 ```
 
@@ -246,7 +266,7 @@ OTLP/HTTP receiver. The script exits 0 on success; compose is left running.
 ### Incident investigation journey E2E
 
 ```bash
-# Requires docker compose up -d (all services) to be running.
+# Requires the local opt-in Compose stack to be running.
 ./scripts/e2e-incident-journey.sh
 ```
 
@@ -348,21 +368,24 @@ emitted as-is. Documented sensitive keys: `Authorization`, `Cookie`,
 ## Error handling and export failure observability
 
 - Collector export failures are logged to the container's stdout/stderr and are
-  never silently dropped. Inspect them with `docker compose logs otel-collector`.
+  never silently dropped. Inspect them with
+  `docker compose -f compose.yaml -f compose.local.yaml logs otel-collector`.
 - Gateway/Orders-side export failures are logged by the application and are
   never fatal to the application.
-- If any service reports `unhealthy` in `docker compose ps`, telemetry export is
-  degraded or unavailable; check `docker compose logs <service>`.
+- If any service reports `unhealthy` in `docker compose -f compose.yaml -f
+  compose.local.yaml ps`, telemetry export is degraded or unavailable; check
+  `docker compose -f compose.yaml -f compose.local.yaml logs <service>`.
 - The metrics pipeline currently exports to Prometheus (via Collector) and is
   scraped by Prometheus. Metrics are queryable in Grafana.
 
 ## Known limitations
 
 - Tempo, Loki, and PostgreSQL use named volumes for persistence; data survives
-  `docker compose down` but not `docker compose down -v`.
+  `docker compose -f compose.yaml -f compose.local.yaml down` but not with `-v`.
 - Runtime validation (`docker compose up`) requires a Docker daemon and the
-  ability to pull pinned images. If either is unavailable, `docker compose
-  config` still validates the YAML.
+  ability to pull pinned images. If either is unavailable, `docker compose -f
+  compose.yaml -f compose.local.yaml config` still validates the YAML after
+  opting into local credentials.
 - Resource limits are estimates. If containers are OOM-killed or CPU-throttled
   under load, raise the corresponding limits in `compose.yaml` and re-test.
 - Health-check probes assume the service images ship the required probe tools

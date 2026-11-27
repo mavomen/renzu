@@ -257,6 +257,19 @@ fn compare_flags_incompatible_runs() {
     let _ = fs::remove_dir(&reports_dir);
 }
 
+const LOCAL_GRAFANA_USER: &str = "admin";
+const LOCAL_GRAFANA_PASSWORD: &str = "admin";
+
+fn compose_command() -> std::process::Command {
+    let mut command = std::process::Command::new("docker");
+    command
+        .arg("compose")
+        .args(["-f", "compose.yaml", "-f", "compose.local.yaml"])
+        .env("GF_SECURITY_ADMIN_USER", LOCAL_GRAFANA_USER)
+        .env("GF_SECURITY_ADMIN_PASSWORD", LOCAL_GRAFANA_PASSWORD);
+    command
+}
+
 fn docker_compose_available() -> bool {
     let docker_version = std::process::Command::new("docker")
         .arg("version")
@@ -269,8 +282,7 @@ fn docker_compose_available() -> bool {
         return false;
     }
 
-    let compose_config = std::process::Command::new("docker")
-        .arg("compose")
+    let compose_config = compose_command()
         .arg("config")
         .output()
         .map(|output| output.status.success())
@@ -279,8 +291,7 @@ fn docker_compose_available() -> bool {
         return false;
     }
 
-    let output = match std::process::Command::new("docker")
-        .arg("compose")
+    let output = match compose_command()
         .arg("config")
         .arg("--format")
         .arg("json")
@@ -356,7 +367,9 @@ fn renzu() -> std::process::Command {
     let bin = std::env::var("CARGO_BIN_EXE_renzu")
         .expect("CARGO_BIN_EXE_renzu is set by cargo for integration tests");
     let mut cmd = std::process::Command::new(bin);
-    cmd.current_dir(workspace_root());
+    cmd.current_dir(workspace_root())
+        .env("GF_SECURITY_ADMIN_USER", LOCAL_GRAFANA_USER)
+        .env("GF_SECURITY_ADMIN_PASSWORD", LOCAL_GRAFANA_PASSWORD);
     cmd
 }
 
@@ -390,8 +403,8 @@ fn up_status_down_lifecycle() {
     assert_eq!(status.status.code(), Some(0));
     let status_out = String::from_utf8_lossy(&status.stdout);
     assert!(
-        status_out.contains("jaeger"),
-        "status output missing jaeger: {status_out}"
+        status_out.contains("tempo"),
+        "status output missing tempo: {status_out}"
     );
     assert!(
         status_out.contains("otel-collector"),

@@ -25,7 +25,8 @@ platform. There are no releases or published images.
 - Rust toolchain pinned in `rust-toolchain.toml` (currently 1.97.0).
 - About 3.75 GiB RAM and 3.75 CPU cores for the container limits.
 - Loopback ports: `3000`, `3100`, `3200`, `4317`, `4318`, `4319`, `8080`,
-  `8081`, `9090`, `9464`, `13133`, and `5432`.
+  `8081`, `9090`, `9464`, and `13133`. Port `5432` is added only by the local
+  opt-in Compose overlay.
 
 ## Quickstart
 
@@ -35,25 +36,36 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
-# 2. Start the stack.
-docker compose up -d
+# 2. Opt into local-only credentials and PostgreSQL host publication.
+cp .env.example .env
+COMPOSE_FILES=(-f compose.yaml -f compose.local.yaml)
 
-# 3. Generate traffic.
+# 3. Start the stack.
+docker compose "${COMPOSE_FILES[@]}" up -d
+
+# 4. Generate traffic.
 curl -fsS http://127.0.0.1:8080/health
 curl -fsS http://127.0.0.1:8080/order/demo-1
 
-# 4. Inspect telemetry in Grafana at http://127.0.0.1:3000.
-#    Default local-only login: admin / admin.
+# 5. Inspect telemetry in Grafana at http://127.0.0.1:3000.
+#    Login comes from .env; the example values are local-only admin / admin.
 #    Explore -> Tempo for traces, Loki for logs, Prometheus for metrics.
 
-# 5. Tear down. Add -v to remove named volumes.
-docker compose down
+# 6. Tear down. Add -v to remove named volumes.
+docker compose "${COMPOSE_FILES[@]}" down
 ```
 
+The base `compose.yaml` publishes no PostgreSQL host port and requires Grafana
+credentials from the environment. `.env.example` and `compose.local.yaml` are
+the explicit local opt-in path. `.env` is ignored by Git.
+
 If host port `5432` is already in use, create an untracked Compose override that
-maps a different host port (for example `15432:5432`) and pass it to both `up`
-and `down` with `-f compose.yaml -f <override-file>`. Inter-service DNS is
-unaffected.
+maps a different host port (for example `15432:5432`) and pass it after the
+local overlay to both `up` and `down`:
+`docker compose -f compose.yaml -f compose.local.yaml -f <override-file> up -d`.
+The proof scripts accept the same extra file via
+`RENZU_COMPOSE_OVERRIDE=<override-file> ./scripts/ci-local.sh`. Inter-service
+DNS is unaffected.
 
 ### Run the proof scripts
 
@@ -137,8 +149,10 @@ are best-effort: no global W3C propagator is installed in the services, so a
 link may not resolve to a service span. Set `RENZU_TEMPO_URL` and
 `RENZU_GRAFANA_URL` if those services are not on their default loopback ports.
 
-`up`, `status`, and `down` use `compose.yaml` from the current directory unless
-`RENZU_COMPOSE_FILE` or `--compose-file` is set.
+`up`, `status`, and `down` use `compose.yaml` with the `compose.local.yaml`
+overlay from the current directory unless `RENZU_COMPOSE_FILE` or
+`--compose-file` is set. An explicit compose file is used alone, without the
+local overlay.
 
 ## Configuration
 
@@ -148,8 +162,8 @@ link may not resolve to a service span. Set `RENZU_TEMPO_URL` and
 | `RENZU_OTLP_METRICS_ENDPOINT` | gateway | `http://127.0.0.1:4318/v1/metrics` | Collector OTLP/HTTP metrics receiver |
 | `RENZU_LOG_LEVEL` | gateway, orders | `info` | `tracing` filter |
 | `RENZU_ENVIRONMENT` | gateway, orders | `local` | Resource attribute |
-| `GF_SECURITY_ADMIN_USER` | Grafana | `admin` | Local-only default; override off loopback |
-| `GF_SECURITY_ADMIN_PASSWORD` | Grafana | `admin` | Local-only default; override off loopback |
+| `GF_SECURITY_ADMIN_USER` | Grafana | required | Set from `.env`; the example uses local-only `admin` |
+| `GF_SECURITY_ADMIN_PASSWORD` | Grafana | required | Set from `.env`; the example uses local-only `admin` |
 | `RENZU_DB_USER` / `RENZU_DB_PASSWORD` / `RENZU_DB_NAME` | Postgres | `renzu` / `renzu` / `renzu` | Local-only defaults |
 | `RENZU_TEMPO_URL` | `renzu` | `http://127.0.0.1:3200` | Report trace links |
 | `RENZU_GRAFANA_URL` | `renzu` | `http://127.0.0.1:3000` | Report Explore links |
@@ -160,7 +174,7 @@ exporters and must target `4318`.
 
 ## Known limitations
 
-- Local lab only: loopback ports, default credentials, and no production
+- Local lab only: loopback ports, opt-in local credentials, and no production
   storage or access control. The fault endpoints on the gateway are
   unauthenticated.
 - Loki labels application OTLP log streams `service_name=unknown_service`;

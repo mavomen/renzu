@@ -36,24 +36,28 @@ jobs:
     runs-on: ubuntu-latest
     needs: checks
     timeout-minutes: 20
+    # Local-only test credentials for the loopback Compose lab.
+    env:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Start local infrastructure (docker compose)
-        run: docker compose up -d
+        run: docker compose -f compose.yaml -f compose.local.yaml up -d
 
       - name: Wait for services to be healthy
         run: |
           for i in $(seq 1 60); do
-            if docker compose ps --format json | jq -s -e 'length > 0 and all(.[]; .Health == "healthy")' >/dev/null; then
+            if docker compose -f compose.yaml -f compose.local.yaml ps --format json | jq -s -e 'length > 0 and all(.[]; .Health == "healthy")' >/dev/null; then
               echo "services healthy"
               exit 0
             fi
             sleep 2
           done
           echo "services did not become healthy:" >&2
-          docker compose ps >&2
+          docker compose -f compose.yaml -f compose.local.yaml ps >&2
           exit 1
 
       - name: Run infrastructure verification
@@ -74,9 +78,9 @@ jobs:
       - name: Dump compose diagnostics
         if: failure()
         run: |
-          docker compose ps
-          docker compose logs --no-color --tail=200
+          docker compose -f compose.yaml -f compose.local.yaml ps
+          docker compose -f compose.yaml -f compose.local.yaml logs --no-color --tail=200
 
       - name: Stop local infrastructure
-        run: docker compose down -v
+        run: docker compose -f compose.yaml -f compose.local.yaml down -v
         if: always()
