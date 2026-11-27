@@ -30,6 +30,8 @@ struct HealthResponse {
 struct ReadyResponse {
     status: String,
     service: String,
+    span_export_failures: u64,
+    log_export_failures: u64,
 }
 
 /// Shared fault-injection state. All faults are disabled by default.
@@ -159,6 +161,8 @@ async fn ready(
         return Ok(Json(ReadyResponse {
             status: "not ready".to_string(),
             service: "gateway".to_string(),
+            span_export_failures: telemetry.export_failures(),
+            log_export_failures: telemetry.log_export_failures(),
         }));
     }
 
@@ -168,6 +172,8 @@ async fn ready(
         return Ok(Json(ReadyResponse {
             status: "not ready".to_string(),
             service: "gateway".to_string(),
+            span_export_failures: telemetry.export_failures(),
+            log_export_failures: telemetry.log_export_failures(),
         }));
     }
 
@@ -178,6 +184,8 @@ async fn ready(
     let response = Ok(Json(ReadyResponse {
         status: status.to_string(),
         service: "gateway".to_string(),
+        span_export_failures: telemetry.export_failures(),
+        log_export_failures: telemetry.log_export_failures(),
     }));
     if let Err(ref err) = response {
         span.record("error", tracing::field::display(err));
@@ -223,6 +231,7 @@ async fn order_forward(
 ) -> Result<axum::Json<serde_json::Value>, AppError> {
     let span = Span::current();
     span.record("order.id", &id);
+    tracing::info!(route = "/order/:id", order_id = %id, "order lookup requested");
 
     // Inject controlled error if enabled.
     if fault_state.is_controlled_error_enabled() {
@@ -365,7 +374,7 @@ async fn disable_database_connection(
     Json(serde_json::json!({ "fault": "database-connection", "enabled": false }))
 }
 
-pub async fn run(config: Config) -> Result<(), AppError> {
+pub async fn run(config: Config, telemetry: Telemetry) -> Result<(), AppError> {
     let addr: SocketAddr = config
         .bind_addr()
         .parse()
@@ -388,15 +397,69 @@ pub async fn run(config: Config) -> Result<(), AppError> {
         .map_err(|e| AppError::Internal(format!("orders client build failed: {e}")))?;
 
     let fault_state = Arc::new(FaultState::default());
-    let telemetry = crate::telemetry::Telemetry::init(&config.log_level)
-        .map_err(|e| AppError::Internal(format!("telemetry init error: {e}")))?;
-    let app = app(pool.clone(), orders_client, fault_state, telemetry.clone())
-        .layer(MetricsLayer::new(metrics));
+    let app =
+        app(pool.clone(), orders_client, fault_state, telemetry).layer(MetricsLayer::new(metrics));
     info!(address = %addr, "gateway listening");
     let result = axum::serve(listener, app).await;
-    telemetry.shutdown();
     let _ = metrics_handle.shutdown();
     pool.close().await;
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+
+    fn lazy_pool() -> Arc<db::DbPool> {
+        Arc::new(
+            PgPoolOptions::new()
+                .connect_lazy("postgres://renzu:renzu@127.0.0.1:1/renzu")
+                .expect("lazy pool should build"),
+        )
+    }
+
+    #[tokio::test]
+    async fn ready_reports_log_export_failure() {
+        let telemetry = Telemetry::with_counters(0, 2);
+        let Json(response) = ready(
+            Extension(lazy_pool()),
+            Extension(Arc::new(FaultState::default())),
+            Extension(telemetry),
+        )
+        .await
+        .expect("ready should respond");
+
+        assert_eq!(response.status, "not ready");
+        assert_eq!(response.service, "gateway");
+        assert_eq!(response.span_export_failures, 0);
+        assert_eq!(response.log_export_failures, 2);
+
+        let value = serde_json::to_value(&response).expect("response should serialize");
+        assert_eq!(value["status"], "not ready");
+        assert_eq!(value["span_export_failures"], 0);
+        assert_eq!(value["log_export_failures"], 2);
+    }
+
+    #[tokio::test]
+    async fn ready_reports_span_export_failure() {
+        let telemetry = Telemetry::with_counters(3, 0);
+        let Json(response) = ready(
+            Extension(lazy_pool()),
+            Extension(Arc::new(FaultState::default())),
+            Extension(telemetry),
+        )
+        .await
+        .expect("ready should respond");
+
+        assert_eq!(response.status, "not ready");
+        assert_eq!(response.span_export_failures, 3);
+        assert_eq!(response.log_export_failures, 0);
+
+        let value = serde_json::to_value(&response).expect("response should serialize");
+        assert_eq!(value["status"], "not ready");
+        assert_eq!(value["span_export_failures"], 3);
+        assert_eq!(value["log_export_failures"], 0);
+    }
 }

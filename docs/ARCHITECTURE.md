@@ -1,10 +1,13 @@
 # ARCHITECTURE.md
 
-> **Status:** Draft v0.0.0 (proposed architecture, nothing implemented yet)
+> **Status:** Draft v0.0.0 (MVP implemented; target architecture below)
 > **Source:** `PRD.md`
 > **Detail:** Diagrams and per-component notes live in `docs/architecture/`. Decisions live in `docs/decisions/`.
 
-This document describes the intended system boundaries and data flow. Every element is marked with its implementation state. Nothing here is a claim of working behavior until the component is implemented and verified.
+This document describes the intended system boundaries and data flow and marks
+the current MVP implementation state. `README.md`, `docs/FEATURES.md`, and the
+ADRs in `docs/decisions/` are the current status sources when this target text
+is stale. Nothing here is a claim of working behavior unless the marker says so.
 
 | Marker | Meaning |
 |---|---|
@@ -20,7 +23,7 @@ Update the markers as components land. Keep this file short; move detail into `d
 
 Renzu Observability is a local-first laboratory for reproducing, observing, and diagnosing distributed-system failures. It runs on one developer machine under Docker Compose and is controlled through a Rust CLI, `renzu`.
 
-It composes existing observability tools. It does not replace Prometheus, Grafana, Jaeger, or the OpenTelemetry Collector, and it does not implement its own storage or tracing backend. The Rust code in this project is the demo services, the load generator, the fault-injection controls, the report generator, and the CLI.
+It composes existing observability tools. It does not replace Prometheus, Grafana, Tempo, Loki, or the OpenTelemetry Collector, and it does not implement its own storage or tracing backend. The Rust code in this project is the demo services, the load generator, the fault-injection controls, the report generator, and the CLI.
 
 ---
 
@@ -35,59 +38,59 @@ flowchart LR
 
     subgraph Apps[Demo application]
         GW[gateway] --> ORD[orders]
-        ORD --> PAY[payments]
         ORD --> PG[(PostgreSQL)]
     end
 
     Apps -->|OTLP: traces, metrics, logs| COL[OpenTelemetry Collector]
     COL --> TEM[Tempo]
     COL --> PROM[Prometheus]
-    COL --> LOGS[(Log backend: decision pending)]
+    COL --> LOGS[(Loki)]
     PROM --> GRAF[Grafana]
     LOGS --> GRAF
     Dev --> TEM
     Dev --> GRAF
 ```
 
-The diagram shows the target shape. The first milestone is a subset: one service, the Collector, and a trace backend (see Section 8).
+The diagram shows the implemented MVP shape. A `payments` service is a future
+idea and is not part of the MVP (see Section 8).
 
 ---
 
 ## 3. Components
 
-### 3.1 Demo application (**Planned**)
+### 3.1 Demo application (**Implemented in MVP**)
 
 A small set of independently running Rust services. Their purpose is to produce realistic, controllable distributed behavior, not business value.
 
-| Service | Role | Milestone |
+| Service | Role | Status |
 |---|---|---|
-| Initial service | First instrumented HTTP service with health endpoints | M1 |
-| Second service | Downstream dependency; creates a real cross-service request path | M2 |
-| PostgreSQL | Database dependency; target of latency and failure injection | M2 |
+| `gateway` | Entry HTTP service with health, readiness, fault controls, and telemetry | Implemented |
+| `orders` | Downstream dependency; creates a real cross-service request path | Implemented |
+| PostgreSQL | Database dependency; target of latency and failure injection | Implemented |
 
-The directory layout proposes `gateway`, `orders`, and `payments`. Only the services needed by the current feature should exist. The names and the number of services are not fixed until M2; the PRD requires a minimum of two.
+`payments` remains a future idea; adding it is outside the MVP.
 
-Every service:
+Every implemented service:
 
 - Uses Tokio and Axum.
 - Exposes health and readiness endpoints.
 - Emits structured logs, traces, and metrics using `tracing` and OpenTelemetry-compatible export.
-- Propagates trace context on every outbound call.
+- Forwards an inbound `traceparent` header on outbound calls. A global W3C propagator is not installed, so service spans are not guaranteed to share a trace ID.
 - Never logs credentials or sensitive payloads.
 
-### 3.2 Telemetry pipeline (**Planned**)
+### 3.2 Telemetry pipeline (**Implemented in MVP**)
 
-| Component | Responsibility | Milestone |
+| Component | Responsibility | Status |
 |---|---|---|
-| OpenTelemetry Collector | Single ingest point (OTLP); batching, resource attributes, routing to backends | M1 (traces), M2 (metrics, logs) |
-| Tempo | Trace storage and query (via Grafana) | M1 |
-| Prometheus | Metrics storage and query | M2 |
-| Grafana | Dashboards for metrics, Explore for traces/logs | M2 |
-| Log backend | Log storage and query. **Decision pending (ADR-0002); Loki is the leading candidate** | Decision in M0, provisioned in M2 |
+| OpenTelemetry Collector | Single ingest point (OTLP); batching and routing to backends | Implemented |
+| Tempo | Trace storage and query (via Grafana) | Implemented (ADR-0006) |
+| Prometheus | Metrics storage and query | Implemented |
+| Grafana | Dashboards for metrics, Explore for traces/logs | Implemented |
+| Loki | Log storage and query | Implemented (ADR-0002) |
 
-Services export to the Collector rather than directly to backends. This keeps backend choices out of application code and makes the pipeline itself observable. In M1, logs go to structured stdout only; they join the pipeline once the log backend is provisioned.
+Services export to the Collector rather than directly to backends. This keeps backend choices out of application code and makes the pipeline itself observable. Structured stdout logs remain for local reading; the same `tracing` events also become OTLP LogRecords routed through the Collector to Loki.
 
-### 3.3 `renzu` CLI (**Planned**)
+### 3.3 `renzu` CLI (**Implemented in MVP**)
 
 A Rust binary built with `clap`. It orchestrates the environment and experiments. It does not sit on the request path. Each command lands together with the feature that needs it.
 
@@ -99,17 +102,17 @@ A Rust binary built with `clap`. It orchestrates the environment and experiments
 | `load-test --scenario <name>` | Generate traffic and record measurements | M3 |
 | `report <run-id>` | Read and display a saved experiment report | M3 |
 
-Open question: whether the CLI drives Docker Compose directly or calls a documented orchestration layer (PRD Open Question 5). Record the answer as an ADR.
+Implemented choice: the CLI drives Docker Compose directly with argument arrays. The compose file is selected by `--compose-file`, `RENZU_COMPOSE_FILE`, or `./compose.yaml`.
 
-### 3.4 Load generator (**Planned**)
+### 3.4 Load generator (**Implemented in MVP**)
 
 Generates bounded, configurable traffic (duration plus rate or concurrency) and records request counts, errors, throughput, and latency percentiles. It is a library used by the CLI, introduced in M3. It rejects unsafe configurations to avoid exhausting the host.
 
-### 3.5 Scenario and fault-injection mechanism (**Planned**)
+### 3.5 Scenario and fault-injection mechanism (**Implemented in MVP**)
 
 Scenarios are declarative, validated configuration. They are never executed as shell commands.
 
-Proposed approach (to be confirmed in M3):
+Implemented approach:
 
 - Faults (database latency, error rate, downstream timeout) are enabled by application-level configuration, such as a control endpoint or configuration reload on the target service, rather than by manipulating the host.
 - Control endpoints are disabled by default, enabled only through explicit configuration, and bound to `127.0.0.1`. Their parameters are bounded and validated.
@@ -117,7 +120,7 @@ Proposed approach (to be confirmed in M3):
 - Cleanup is verified, not assumed. A failed cleanup is reported as a failure.
 - Faults affect only project-owned containers.
 
-### 3.6 Experiment reports (**Planned**)
+### 3.6 Experiment reports (**Implemented in MVP**)
 
 Each experiment produces one local report keyed by a unique run ID, written to disk so it can be read without a running CLI process.
 
@@ -137,20 +140,20 @@ The storage format and location are decided in M3. Telemetry availability and ex
 ## 4. Request and Telemetry Flow
 
 1. The load generator (or a manual request) sends an HTTP request to the entry service.
-2. The entry service starts a root span, then calls the downstream service and PostgreSQL. Trace context travels in standard propagation headers on each outbound call.
+2. The entry service starts a root span, then calls the downstream service and PostgreSQL. An inbound `traceparent` header is forwarded, but no global W3C propagator is installed, so the resulting service spans are not guaranteed to share one trace ID.
 3. Each service emits logs, spans, and metrics using OTLP to the Collector.
-4. The Collector batches telemetry and exports traces to Tempo, metrics to Prometheus, and logs to the chosen log backend.
-5. The developer inspects traces in Grafana Explore (Tempo), metrics and dashboards in Grafana, and logs through the log backend's interface.
+4. The Collector batches telemetry and exports traces to Tempo, metrics to Prometheus, and logs to Loki.
+5. The developer inspects traces in Grafana Explore (Tempo), metrics and dashboards in Grafana, and logs through Loki in Grafana Explore.
 
-Metrics may reach Prometheus through Collector export or direct scraping of service endpoints. This choice is made in M2 and recorded in an ADR.
+Metrics reach Prometheus through the Collector's Prometheus exporter at `:9464` (ADR-0005). Direct service scraping is not part of the MVP.
 
 ---
 
 ## 5. Cross-Signal Correlation
 
-- **Traces to logs:** Logs carry the trace ID and span ID of the active span. Whether a developer can jump from a trace to its logs, or the reverse, depends on the log backend and its Grafana integration. This is decision pending; no correlation is claimed until log-trace correlation is demonstrated in M2.
-- **Metrics to traces:** Not planned for the MVP. Do not claim exemplar or other metric-to-trace links unless tested.
-- **Run reports to telemetry:** Reports store references (such as trace IDs and time windows) so a reader can find the relevant telemetry. Reports do not copy telemetry.
+- **Logs to traces:** OTLP log records carry the trace ID and span ID of the active span. Loki stores those fields in the log line, and Grafana provisions a derived field that links a matching log to the Tempo trace. Trace-to-log UI linking is not configured, and `scripts/e2e-log-trace-correlation.sh` verifies only the log-to-trace path.
+- **Metrics to traces:** Not implemented in the MVP. Do not claim exemplar or other metric-to-trace links.
+- **Run reports to telemetry:** Reports store best-effort Tempo and Grafana Explore links built from client-generated `traceparent` IDs. Because no global propagator is installed, a link may not resolve to a service span. Reports do not copy telemetry.
 
 Known correlation gaps must be documented next to the feature that has them.
 
@@ -214,8 +217,10 @@ Significant decisions are recorded as ADRs in `docs/decisions/`.
 | ADR | Topic | State |
 |---|---|---|
 | 0001 | Reference repository reconnaissance (license, runnable examples, versions) | Accepted (M0) |
-| 0002 | Log backend selection (candidate: Loki) | Accepted (M0) |
+| 0002 | Log backend selection (Loki) | Accepted (M0) |
 | 0003 | Project license | Accepted (M0) |
+| 0004 | OpenTelemetry Rust crate selection | Accepted (M0) |
+| 0005 | OpenTelemetry Collector pipeline | Accepted (M1) |
 | 0006 | Trace backend selection (Tempo) | Accepted (M1) |
 | TBD | Minimum supported Rust toolchain | Open |
 | TBD | CLI orchestration: direct Compose control vs documented layer | Open |

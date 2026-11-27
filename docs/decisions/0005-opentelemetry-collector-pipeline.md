@@ -4,6 +4,11 @@
 **Deciders:** Renzu maintainer
 **Date:** 2026-11-01
 
+> **Update:** ADR-0006 replaced Jaeger with Tempo. Application exporters now
+> target the Collector's OTLP/HTTP receiver at `4318/v1/traces`; `4317` is the
+> gRPC receiver and is not used by these services. The context below records the
+> original decision.
+
 ## Context
 
 F-003 provisions the OpenTelemetry Collector container

@@ -11,7 +11,7 @@
 
 Renzu Observability is a Rust-based distributed observability laboratory designed to help developers understand, reproduce, investigate, and diagnose failures in distributed applications.
 
-The project combines an instrumented demonstration system, a reproducible fault-injection environment, a telemetry pipeline, and a developer-oriented command-line interface. It composes established tools (OpenTelemetry Collector, Jaeger, Prometheus, Grafana). The Rust code is the demo services, load generator, fault-injection controls, report generator, and CLI.
+The project combines an instrumented demonstration system, a reproducible fault-injection environment, a telemetry pipeline, and a developer-oriented command-line interface. It composes established tools (OpenTelemetry Collector, Tempo, Loki, Prometheus, Grafana). The Rust code is the demo services, load generator, fault-injection controls, report generator, and CLI.
 
 The project uses the publicly available code repository accompanying *Mastering Distributed Observability in Rust* as a learning reference. It independently establishes product requirements, architectural decisions, testing standards, and development workflows.
 
@@ -81,7 +81,7 @@ These are initial product hypotheses to validate during implementation, not clai
 
 The initial release will not:
 
-- Replace Prometheus, Grafana, Jaeger, or the OpenTelemetry Collector.
+- Replace Prometheus, Grafana, Tempo, Loki, or the OpenTelemetry Collector.
 - Implement a custom time-series database or tracing backend.
 - Provide a production-ready hosted SaaS platform.
 - Manage production infrastructure or credentials.
@@ -220,7 +220,7 @@ Requirements:
 - Use an OpenTelemetry Collector for telemetry pipeline management.
 - Provide Prometheus for metrics and Grafana for visualization.
 - Provide Tempo (via Grafana) for trace inspection.
-- Select the log storage and query backend during M0 and record the decision in an ADR (`docs/decisions/`). Loki is the leading candidate because of its Grafana integration and support for linking log lines to traces, but it is not decided until the ADR exists. Evaluate candidates on local resource footprint, OTLP ingestion path, Grafana integration, and trace-ID linking.
+- Use Loki as the log storage and query backend, as decided in `docs/decisions/0002-log-backend.md` after evaluating local resource footprint, OTLP ingestion path, Grafana integration, and trace-ID linking.
 - Include health checks and troubleshooting guidance.
 
 Acceptance criteria:
@@ -461,7 +461,7 @@ These are initial technology choices subject to verification during repository r
 | Metrics | Prometheus |
 | Dashboards | Grafana |
 | Trace visualization | Tempo (via Grafana) |
-| Log backend | **To be decided in M0 via ADR** (candidate: Loki) |
+| Log backend | Loki (`docs/decisions/0002-log-backend.md`) |
 | Database | PostgreSQL |
 | CLI | `clap` |
 | Local orchestration | Docker Compose |
@@ -826,7 +826,8 @@ A successful build alone is not sufficient evidence of completion.
 - OpenTelemetry: https://opentelemetry.io/docs/
 - Rust `tracing`: https://docs.rs/tracing
 - Prometheus: https://prometheus.io/docs/
-- Jaeger: https://www.jaegertracing.io/docs/
+- Grafana Tempo: https://grafana.com/docs/tempo/latest/
+- Grafana Loki: https://grafana.com/docs/loki/latest/
 - Grafana: https://grafana.com/docs/
 
 The reference repository is a learning resource, not a substitute for verifying current APIs, licensing, architecture, and implementation behavior.

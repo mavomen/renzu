@@ -408,7 +408,7 @@ mod tests {
     fn telemetry_references_produce_observation() {
         let mut report = make_report(100, 100, 50.0, 10.0, CompletionStatus::Complete);
         report.telemetry_references = vec![
-            "http://jaeger/trace/abc".to_string(),
+            "http://127.0.0.1:3200/api/traces/abc".to_string(),
             "http://grafana/explore".to_string(),
         ];
         let result = diagnose(&report);

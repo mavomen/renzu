@@ -20,6 +20,8 @@ struct HealthResponse {
 struct ReadyResponse {
     status: String,
     service: String,
+    span_export_failures: u64,
+    log_export_failures: u64,
 }
 
 pub fn app(telemetry: Telemetry) -> Router {
@@ -29,7 +31,16 @@ pub fn app(telemetry: Telemetry) -> Router {
         .route("/", get(root))
         .route("/order/:id", get(order))
         .layer(Extension(telemetry))
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+                tracing::span!(
+                    tracing::Level::INFO,
+                    "http.request",
+                    method = %req.method(),
+                    route = %req.uri().path(),
+                )
+            }),
+        )
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -51,6 +62,8 @@ async fn ready(Extension(telemetry): Extension<Telemetry>) -> Json<ReadyResponse
     Json(ReadyResponse {
         status: status.to_string(),
         service: "orders".to_string(),
+        span_export_failures: telemetry.export_failures(),
+        log_export_failures: telemetry.log_export_failures(),
     })
 }
 
@@ -73,7 +86,7 @@ async fn order(Path(id): Path<String>) -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn run(config: Config) -> Result<(), AppError> {
+pub async fn run(config: Config, telemetry: Telemetry) -> Result<(), AppError> {
     let addr: SocketAddr = config
         .bind_addr()
         .parse()
@@ -81,12 +94,29 @@ pub async fn run(config: Config) -> Result<(), AppError> {
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
         AppError::Internal(format!("failed to bind to {}: {e}", config.bind_addr()))
     })?;
-    let telemetry = crate::telemetry::Telemetry::init(&config.log_level)
-        .map_err(|e| AppError::Internal(format!("telemetry init error: {e}")))?;
-    let app = app(telemetry.clone());
+    let app = app(telemetry);
     info!(address = %addr, "orders service listening");
     let result = axum::serve(listener, app).await;
-    telemetry.shutdown();
     result.map_err(|e| AppError::Internal(format!("server error: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn ready_reports_log_export_failure() {
+        let Json(response) = ready(Extension(Telemetry::with_counters(0, 2))).await;
+
+        assert_eq!(response.status, "not ready");
+        assert_eq!(response.service, "orders");
+        assert_eq!(response.span_export_failures, 0);
+        assert_eq!(response.log_export_failures, 2);
+
+        let value = serde_json::to_value(&response).expect("response should serialize");
+        assert_eq!(value["status"], "not ready");
+        assert_eq!(value["span_export_failures"], 0);
+        assert_eq!(value["log_export_failures"], 2);
+    }
 }

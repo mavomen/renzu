@@ -2,8 +2,9 @@
 //!
 //! Provides `clap`-based argument parsing, top-level help, command and
 //! error-handling conventions, and stable exit codes. `up`, `status`, and
-//! `down` drive the local observability environment (`compose.yaml`) through
-//! `docker compose`; `scenario` and `load-test` drive fault-injection
+//! `down` drive the local observability environment (`compose.yaml` plus the
+//! opt-in `compose.local.yaml` overlay) through `docker compose`; `scenario`
+//! and `load-test` drive fault-injection
 //! experiments; `report` reads a saved experiment report from disk; `compare`
 //! compares two saved experiment reports and prints metric deltas.
 
@@ -47,8 +48,8 @@ enum Command {
     Up {
         /// Path to the compose file.
         ///
-        /// Defaults to `compose.yaml` in the current working directory, or
-        /// the value of the `RENZU_COMPOSE_FILE` environment variable.
+        /// Defaults to `compose.yaml` plus `compose.local.yaml` in the current
+        /// working directory, or the value of `RENZU_COMPOSE_FILE`.
         #[arg(long)]
         compose_file: Option<PathBuf>,
     },
@@ -56,8 +57,8 @@ enum Command {
     Status {
         /// Path to the compose file.
         ///
-        /// Defaults to `compose.yaml` in the current working directory, or
-        /// the value of the `RENZU_COMPOSE_FILE` environment variable.
+        /// Defaults to `compose.yaml` plus `compose.local.yaml` in the current
+        /// working directory, or the value of `RENZU_COMPOSE_FILE`.
         #[arg(long)]
         compose_file: Option<PathBuf>,
     },
@@ -65,8 +66,8 @@ enum Command {
     Down {
         /// Path to the compose file.
         ///
-        /// Defaults to `compose.yaml` in the current working directory, or
-        /// the value of the `RENZU_COMPOSE_FILE` environment variable.
+        /// Defaults to `compose.yaml` plus `compose.local.yaml` in the current
+        /// working directory, or the value of `RENZU_COMPOSE_FILE`.
         #[arg(long)]
         compose_file: Option<PathBuf>,
     },
@@ -205,6 +206,9 @@ impl CliError {
 
 /// Compose file name used when no flag or environment variable provides one.
 const COMPOSE_DEFAULT_FILE: &str = "compose.yaml";
+
+/// Local opt-in overlay added to the default Compose file when present.
+const COMPOSE_LOCAL_OVERLAY: &str = "compose.local.yaml";
 
 /// Environment variable overriding the default compose file path.
 const COMPOSE_FILE_ENV: &str = "RENZU_COMPOSE_FILE";
@@ -347,27 +351,36 @@ fn run_or_report(f: impl FnOnce() -> Result<ExitCode, CliError>) -> ExitCode {
     }
 }
 
-/// Resolve the compose file: CLI flag > `RENZU_COMPOSE_FILE` > `./compose.yaml`.
-fn resolve_compose_file(override_: Option<&Path>) -> PathBuf {
+/// Resolve Compose files: CLI flag > `RENZU_COMPOSE_FILE` > default files.
+///
+/// The default path uses `compose.yaml` with `compose.local.yaml` when that
+/// opt-in overlay exists, so `renzu up` matches the documented local workflow.
+fn resolve_compose_files(override_: Option<&Path>) -> Vec<PathBuf> {
     if let Some(path) = override_ {
-        return path.to_path_buf();
+        return vec![path.to_path_buf()];
     }
     if let Ok(path) = std::env::var(COMPOSE_FILE_ENV) {
-        return PathBuf::from(path);
+        return vec![PathBuf::from(path)];
     }
-    std::env::current_dir()
+    let base = std::env::current_dir()
         .unwrap_or_default()
-        .join(COMPOSE_DEFAULT_FILE)
+        .join(COMPOSE_DEFAULT_FILE);
+    let overlay = base.with_file_name(COMPOSE_LOCAL_OVERLAY);
+    if overlay.exists() {
+        vec![base, overlay]
+    } else {
+        vec![base]
+    }
 }
 
-/// Invoke `docker compose -f <file> <args...>`.
-fn run_docker_compose(file: &Path, args: &[&str]) -> Result<std::process::Output, CliError> {
-    match std::process::Command::new("docker")
-        .args(["compose", "-f"])
-        .arg(file)
-        .args(args)
-        .output()
-    {
+/// Invoke `docker compose -f <file>... <args...>`.
+fn run_docker_compose(files: &[PathBuf], args: &[&str]) -> Result<std::process::Output, CliError> {
+    let mut command = std::process::Command::new("docker");
+    command.arg("compose");
+    for file in files {
+        command.arg("-f").arg(file);
+    }
+    match command.args(args).output() {
         Ok(output) => Ok(output),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Err(CliError::Orchestration(
             "docker compose not found: install Docker and Docker Compose".to_string(),
@@ -449,8 +462,8 @@ fn not_ready(services: &[ServiceStatus]) -> String {
 /// Starts services with `docker compose up -d`, then polls `docker compose
 /// ps` until every service is ready or the timeout elapses.
 fn run_up(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
-    let file = resolve_compose_file(compose_file.as_deref());
-    let output = run_docker_compose(&file, &["up", "-d"])?;
+    let files = resolve_compose_files(compose_file.as_deref());
+    let output = run_docker_compose(&files, &["up", "-d"])?;
     if !output.status.success() {
         return Err(CliError::Orchestration(format!(
             "docker compose up -d failed: {}",
@@ -459,7 +472,7 @@ fn run_up(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
     }
     let deadline = Instant::now() + UP_TIMEOUT;
     loop {
-        let ps = run_docker_compose(&file, &["ps"])?;
+        let ps = run_docker_compose(&files, &["ps"])?;
         let services = parse_compose_ps(&String::from_utf8_lossy(&ps.stdout));
         if all_ready(&services) {
             return Ok(ExitCode::from(0));
@@ -479,8 +492,8 @@ fn run_up(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
 /// Prints a service/health table and exits 0 only when every service is
 /// ready; exits 1 otherwise or when `docker compose ps` itself fails.
 fn run_status(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
-    let file = resolve_compose_file(compose_file.as_deref());
-    let output = run_docker_compose(&file, &["ps"])?;
+    let files = resolve_compose_files(compose_file.as_deref());
+    let output = run_docker_compose(&files, &["ps"])?;
     if !output.status.success() {
         return Err(CliError::Orchestration(format!(
             "docker compose ps failed: {}",
@@ -506,8 +519,8 @@ fn run_status(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
 /// Exits 0 only when `docker compose down` reports success; a failed
 /// cleanup is never reported as success.
 fn run_down(compose_file: Option<PathBuf>) -> Result<ExitCode, CliError> {
-    let file = resolve_compose_file(compose_file.as_deref());
-    let output = run_docker_compose(&file, &["down"])?;
+    let files = resolve_compose_files(compose_file.as_deref());
+    let output = run_docker_compose(&files, &["down"])?;
     if output.status.success() {
         Ok(ExitCode::from(0))
     } else {

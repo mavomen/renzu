@@ -8,7 +8,13 @@ set -euo pipefail
 # 3. Startup failures produce actionable diagnostics
 # 4. Shutdown behavior is tested
 
-COMPOSE_FILE="compose.yaml"
+# Local-only opt-in credentials and Compose files for the verification stack.
+export GF_SECURITY_ADMIN_USER="${GF_SECURITY_ADMIN_USER:-admin}"
+export GF_SECURITY_ADMIN_PASSWORD="${GF_SECURITY_ADMIN_PASSWORD:-admin}"
+COMPOSE_FILES=(-f "compose.yaml" -f "compose.local.yaml")
+if [[ -n "${RENZU_COMPOSE_OVERRIDE:-}" ]]; then
+    COMPOSE_FILES+=(-f "$RENZU_COMPOSE_OVERRIDE")
+fi
 EXPECTED_SERVICES=("tempo" "otel-collector" "prometheus" "loki" "grafana" "postgres")
 HEALTHY_TIMEOUT=120  # seconds to wait for all services to become healthy
 SERVICE_START_TIMEOUT=10  # seconds to wait for individual service port
@@ -21,13 +27,6 @@ fail() {
 info() {
     echo "==> $*"
 }
-
-# Cleanup function - ensures compose is down on exit
-cleanup() {
-    info "cleaning up: stopping docker compose"
-    docker compose -f "${COMPOSE_FILE}" down -v 2>/dev/null || true
-}
-trap cleanup EXIT
 
 # Wait for a service port to be available
 wait_for_service_port() {
@@ -49,7 +48,7 @@ check_all_healthy() {
     while [[ $(date +%s) -lt $deadline ]]; do
         local all_healthy=true
         local ps_output
-        ps_output=$(docker compose -f "${COMPOSE_FILE}" ps --format json 2>/dev/null) || return 1
+        ps_output=$(docker compose "${COMPOSE_FILES[@]}" ps --format json 2>/dev/null) || return 1
         
         for service in "${EXPECTED_SERVICES[@]}"; do
             local health
@@ -105,7 +104,7 @@ test_startup_failure_diagnostics() {
     
     # This verifies that `docker compose ps` shows proper state
     # and provides actionable diagnostics when services fail
-    docker compose -f "${COMPOSE_FILE}" ps --format "table {{.Name}}\t{{.State}}\t{{.Status}}"
+    docker compose "${COMPOSE_FILES[@]}" ps --format "table {{.Name}}\t{{.State}}\t{{.Status}}"
     
     info "startup failure diagnostics structure verified"
 }
@@ -115,7 +114,7 @@ test_shutdown_behavior() {
     info "testing shutdown behavior"
     
     # Verify all containers stop
-    docker compose -f "${COMPOSE_FILE}" down
+    docker compose "${COMPOSE_FILES[@]}" down
     
     # Verify no leftover containers
     local leftovers
@@ -137,8 +136,8 @@ main() {
     info "starting infrastructure verification"
     
     # 1. Start infrastructure
-    info "starting infrastructure with: docker compose -f ${COMPOSE_FILE} up -d"
-    docker compose -f "${COMPOSE_FILE}" up -d
+    info "starting infrastructure with: docker compose ${COMPOSE_FILES[*]} up -d"
+    docker compose "${COMPOSE_FILES[@]}" up -d
     
     # 2. Wait for all services to be healthy
     info "waiting for all services to become healthy (timeout: ${HEALTHY_TIMEOUT}s)"
@@ -146,7 +145,7 @@ main() {
     
     # Verify docker compose ps shows all healthy
     info "all services healthy"
-    docker compose -f "${COMPOSE_FILE}" ps
+    docker compose "${COMPOSE_FILES[@]}" ps
     
     # 3. Verify health endpoints
     verify_health_endpoints
@@ -159,9 +158,10 @@ main() {
     
     # Restart for any subsequent tests
     info "restarting infrastructure for subsequent tests"
-    docker compose -f "${COMPOSE_FILE}" up -d
+    docker compose "${COMPOSE_FILES[@]}" up -d
     check_all_healthy || fail "services did not become healthy after restart"
-    
+
+    info "infrastructure left running for subsequent E2E tests"
     info "ALL INFRASTRUCTURE VERIFICATIONS PASSED"
 }
 

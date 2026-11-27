@@ -5,6 +5,10 @@ on:
     branches: [develop, main]
   pull_request:
     branches: [develop, main]
+  schedule:
+    # Full suite runs nightly on the default branch (main).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
   RUST_TOOLCHAIN: 1.97.0
@@ -32,27 +36,34 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+  # Fast lane on pushes and PRs; full suite on nightly and manual dispatch.
+  # Keep the check name stable because it is required by branch protection.
   e2e:
     runs-on: ubuntu-latest
     needs: checks
+    timeout-minutes: 20
+    # Local-only test credentials for the loopback Compose lab.
+    env:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Start local infrastructure (docker compose)
-        run: docker compose up -d
+        run: docker compose -f compose.yaml -f compose.local.yaml up -d
 
       - name: Wait for services to be healthy
         run: |
           for i in $(seq 1 60); do
-            if docker compose ps --format json | jq -r '.State' | grep -q "healthy" && ! docker compose ps --format json | jq -r '.State' | grep -Eq "unhealthy|starting"; then
+            if docker compose -f compose.yaml -f compose.local.yaml ps --format json | jq -s -e 'length > 0 and all(.[]; .Health == "healthy")' >/dev/null; then
               echo "services healthy"
               exit 0
             fi
             sleep 2
           done
           echo "services did not become healthy:" >&2
-          docker compose ps >&2
+          docker compose -f compose.yaml -f compose.local.yaml ps >&2
           exit 1
 
       - name: Run infrastructure verification
@@ -61,6 +72,22 @@ jobs:
       - name: Run trace visualization E2E
         run: ./scripts/e2e-trace-visualization.sh
 
+      - name: Run log/trace correlation E2E
+        run: ./scripts/e2e-log-trace-correlation.sh
+
+      - name: Run metrics and report E2E
+        run: ./scripts/e2e-metrics-report.sh
+
+      - name: Run incident investigation journey E2E
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: ./scripts/e2e-incident-journey.sh
+
+      - name: Dump compose diagnostics
+        if: failure()
+        run: |
+          docker compose -f compose.yaml -f compose.local.yaml ps
+          docker compose -f compose.yaml -f compose.local.yaml logs --no-color --tail=200
+
       - name: Stop local infrastructure
-        run: docker compose down -v
+        run: docker compose -f compose.yaml -f compose.local.yaml down -v
         if: always()

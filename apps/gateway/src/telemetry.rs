@@ -4,17 +4,14 @@
 //! installs a `tracing-opentelemetry` layer into the global tracing subscriber.
 //! Export failures are logged to stderr and never fatal.
 //!
-//! Spans are exported through a [`BatchSpanProcessor`] (via
-//! `with_batch_exporter`), which runs exports on a background thread. This keeps
-//! the synchronous OTLP export off the async runtime -- the OTLP HTTP exporter
-//! performs blocking I/O and must not be invoked from within an asynchronous
-//! context.
+//! Spans and logs are exported through Tokio-backed batch processors. Exports
+//! run in the background so request handlers never block on OTLP I/O.
 //!
 //! Logs are emitted as OTLP LogRecords via `opentelemetry-appender-tracing`.
 //! The `OpenTelemetryTracingBridge` layer converts `tracing` events into OTLP
 //! log records, automatically attaching `trace_id`, `span_id`, and `trace_flags`
-//! from the current span context. Logs are exported through a
-//! [`SimpleLogProcessor`] to the same OTLP endpoint (logs path).
+//! from the current span context. Logs use the same OTLP endpoint with `/v1/logs`
+//! substituted for `/v1/traces`.
 //!
 //! Sensitive values can be redacted at the call site with [`Redacted`]:
 //! `tracing::info!(auth = %Redacted(&token), "authenticating")` renders
@@ -26,6 +23,7 @@ use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::log_processor_with_async_runtime::BatchLogProcessor;
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::runtime::Tokio;
 use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor;
@@ -33,7 +31,7 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use opentelemetry_sdk::Resource;
 use std::fmt::{self};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -49,7 +47,7 @@ use tracing_subscriber::Layer;
 
 const SERVICE_NAME: &str = "gateway";
 const DEFAULT_ENVIRONMENT: &str = "local";
-const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4317/v1/traces";
+const DEFAULT_OTLP_ENDPOINT: &str = "http://127.0.0.1:4318/v1/traces";
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Wraps an OTLP span exporter, counting export failures so readiness can
@@ -149,6 +147,7 @@ struct TelemetryInner {
     logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
     export_failures: Arc<AtomicU64>,
     log_export_failures: Arc<AtomicU64>,
+    shutdown_done: AtomicBool,
     /// Guard for the thread-level tracing dispatcher default, used when the
     /// process-wide global default is already installed (e.g. in tests where
     /// multiple tests each call Telemetry::init).
@@ -165,17 +164,43 @@ impl Clone for Telemetry {
 }
 
 impl Telemetry {
-    /// Returns true if no span export has failed since the provider was created.
+    /// Returns true if no span or log export has failed since the provider was
+    /// created.
     ///
-    /// A cumulative counter: once a failure occurs, readiness stays degraded
+    /// Counters are cumulative: once a failure occurs, readiness stays degraded
     /// until the process restarts.
     pub fn export_healthy(&self) -> bool {
-        self.inner.export_failures.load(Ordering::Relaxed) == 0
+        self.export_failures() == 0 && self.log_export_failures() == 0
+    }
+
+    /// Number of failed span export batches since the provider was created.
+    pub fn export_failures(&self) -> u64 {
+        self.inner.export_failures.load(Ordering::Relaxed)
+    }
+
+    /// Number of failed log export batches since the provider was created.
+    pub fn log_export_failures(&self) -> u64 {
+        self.inner.log_export_failures.load(Ordering::Relaxed)
     }
 
     /// Returns true if no log export has failed since the provider was created.
     pub fn log_export_healthy(&self) -> bool {
-        self.inner.log_export_failures.load(Ordering::Relaxed) == 0
+        self.log_export_failures() == 0
+    }
+
+    /// Build a handle with preset failure counters for unit tests.
+    #[cfg(test)]
+    pub(crate) fn with_counters(span_failures: u64, log_failures: u64) -> Self {
+        Self {
+            inner: Arc::new(TelemetryInner {
+                provider: SdkTracerProvider::builder().build(),
+                logger_provider: SdkLoggerProvider::builder().build(),
+                export_failures: Arc::new(AtomicU64::new(span_failures)),
+                log_export_failures: Arc::new(AtomicU64::new(log_failures)),
+                shutdown_done: AtomicBool::new(false),
+                _dispatch_guard: None,
+            }),
+        }
     }
 }
 
@@ -338,8 +363,9 @@ impl Telemetry {
         let counting_log_exporter = CountingLogExporter::new(log_exporter);
         let log_export_failures = counting_log_exporter.failures.clone();
 
+        let log_processor = BatchLogProcessor::builder(counting_log_exporter, Tokio).build();
         let logger_provider = SdkLoggerProvider::builder()
-            .with_simple_exporter(counting_log_exporter)
+            .with_log_processor(log_processor)
             .with_resource(
                 Resource::builder()
                     .with_attributes(vec![
@@ -401,6 +427,7 @@ impl Telemetry {
                 logger_provider,
                 export_failures,
                 log_export_failures,
+                shutdown_done: AtomicBool::new(false),
                 _dispatch_guard,
             }),
         })
@@ -424,6 +451,9 @@ impl Telemetry {
     /// Waits up to [`SHUTDOWN_TIMEOUT`] for export to complete. Timeout or
     /// export errors are logged, never fatal.
     pub fn shutdown(&self) {
+        if self.inner.shutdown_done.swap(true, Ordering::SeqCst) {
+            return;
+        }
         match self.inner.provider.shutdown_with_timeout(SHUTDOWN_TIMEOUT) {
             Ok(()) => tracing::debug!("trace shutdown complete"),
             Err(e) => tracing::warn!(error = %e, "trace shutdown failed"),
@@ -441,6 +471,37 @@ impl Telemetry {
 
 impl Drop for Telemetry {
     fn drop(&mut self) {
-        self.shutdown();
+        // Clones are handed to request handlers. Only the last owner may shut
+        // down the shared providers, otherwise one request ends telemetry for
+        // every subsequent request.
+        if Arc::strong_count(&self.inner) == 1 {
+            self.shutdown();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn export_healthy_requires_span_and_log_exports_to_succeed() {
+        let healthy = Telemetry::with_counters(0, 0);
+        assert!(healthy.export_healthy());
+        assert_eq!(healthy.export_failures(), 0);
+        assert_eq!(healthy.log_export_failures(), 0);
+        assert!(healthy.log_export_healthy());
+
+        let span_failed = Telemetry::with_counters(1, 0);
+        assert!(!span_failed.export_healthy());
+        assert!(span_failed.log_export_healthy());
+
+        let log_failed = Telemetry::with_counters(0, 1);
+        assert!(!log_failed.export_healthy());
+        assert!(!log_failed.log_export_healthy());
+
+        let both_failed = Telemetry::with_counters(2, 3);
+        assert_eq!(both_failed.export_failures(), 2);
+        assert_eq!(both_failed.log_export_failures(), 3);
     }
 }

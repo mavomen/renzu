@@ -36,31 +36,38 @@ const REQUEST_TIMEOUT_SECS: u64 = 10;
 /// timeout so recorded latencies and coordinated-omission corrections fit.
 const MAX_LATENCY_NANOS: u64 = u64::MAX;
 
-/// Jaeger base URL from environment, defaulting to local Jaeger.
-fn jaeger_base_url() -> String {
-    std::env::var("RENZU_JAEGER_URL")
+/// Tempo base URL from environment, defaulting to the local Tempo HTTP API.
+fn tempo_base_url() -> String {
+    std::env::var("RENZU_TEMPO_URL")
         .ok()
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:16686".to_string())
+        .unwrap_or_else(|| "http://127.0.0.1:3200".to_string())
 }
 
-/// Build telemetry reference URLs (Jaeger + Grafana Explore) for a trace ID.
-fn build_telemetry_refs(trace_id: &str, jaeger_base: &str) -> Vec<String> {
-    let mut refs = Vec::with_capacity(2);
-    refs.push(format!(
-        "{}/trace/{}",
-        jaeger_base.trim_end_matches('/'),
-        trace_id
-    ));
-    // Grafana Explore URL — reasonable default using Jaeger datasource name "Jaeger".
-    // Query format: /explore?orgId=1&left=["now-1h","now","Jaeger",{"query":"traceID","traceID":"<id>"}]
-    let grafana_url = format!(
-        "{}/explore?orgId=1&left=[\"now-1h\",\"now\",\"Jaeger\",{{\"query\":\"traceID\",\"traceID\":\"{}\"}}]",
-        jaeger_base.trim_end_matches('/').replace(":16686", ":3000"),
-        trace_id
-    );
-    refs.push(grafana_url);
-    refs
+/// Grafana base URL from environment, defaulting to local Grafana.
+fn grafana_base_url() -> String {
+    std::env::var("RENZU_GRAFANA_URL")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:3000".to_string())
+}
+
+/// Build telemetry reference URLs (Tempo API + Grafana Explore) for a trace ID.
+fn build_telemetry_refs(trace_id: &str, tempo_base: &str, grafana_base: &str) -> Vec<String> {
+    vec![
+        format!(
+            "{}/api/traces/{}",
+            tempo_base.trim_end_matches('/'),
+            trace_id
+        ),
+        // Grafana Explore URL for the provisioned Tempo data source.
+        // Query format: /explore?orgId=1&left=["now-1h","now","Tempo",{"query":"traceID","traceID":"<id>"}]
+        format!(
+            "{}/explore?orgId=1&left=[\"now-1h\",\"now\",\"Tempo\",{{\"query\":\"traceID\",\"traceID\":\"{}\"}}]",
+            grafana_base.trim_end_matches('/'),
+            trace_id
+        ),
+    ]
 }
 
 /// Generate a W3C traceparent header value: `00-<32-hex-trace-id>-<16-hex-span-id>-01`.
@@ -84,7 +91,7 @@ struct TraceRecord {
 }
 
 /// Select trace IDs for telemetry references: all errors + slowest N (default 5),
-/// deduplicated. Returns Jaeger + Grafana Explore URLs for each selected trace ID.
+/// deduplicated. Returns Tempo API + Grafana Explore URLs for each selected trace ID.
 fn select_telemetry_references(records: &[TraceRecord]) -> Vec<String> {
     if records.is_empty() {
         return Vec::new();
@@ -112,10 +119,11 @@ fn select_telemetry_references(records: &[TraceRecord]) -> Vec<String> {
     all_ids.sort();
     all_ids.dedup();
 
-    let jaeger_base = jaeger_base_url();
+    let tempo_base = tempo_base_url();
+    let grafana_base = grafana_base_url();
     let mut refs = Vec::new();
     for trace_id in all_ids {
-        refs.extend(build_telemetry_refs(&trace_id, &jaeger_base));
+        refs.extend(build_telemetry_refs(&trace_id, &tempo_base, &grafana_base));
     }
     refs
 }
@@ -176,7 +184,7 @@ pub struct LoadTestResult {
     pub failed: u64,
     pub throughput_rps: f64,
     pub latency: LatencyStats,
-    /// Deep links to traces for slowest/error requests: Jaeger and Grafana Explore URLs.
+    /// Deep links to traces for slowest/error requests: Tempo API and Grafana Explore URLs.
     pub telemetry_references: Vec<String>,
 }
 
@@ -652,6 +660,18 @@ mod tests {
             workload: Workload::Rate { rps: 10 },
             url: "http://127.0.0.1:8080/health".to_string(),
         }
+    }
+
+    #[test]
+    fn telemetry_refs_use_tempo_and_grafana_urls() {
+        let refs =
+            build_telemetry_refs("abc123", "http://127.0.0.1:3200/", "http://127.0.0.1:3000/");
+
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0], "http://127.0.0.1:3200/api/traces/abc123");
+        assert!(refs[1].starts_with("http://127.0.0.1:3000/explore?"));
+        assert!(refs[1].contains("\"Tempo\""));
+        assert!(refs[1].contains("abc123"));
     }
 
     #[test]

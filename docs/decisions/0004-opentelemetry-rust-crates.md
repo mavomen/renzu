@@ -58,6 +58,16 @@ Operators matching the Compose collector (F-003/F-007) should set
 OTLP HTTP receiver. The HTTP exporter posts to the endpoint URL as-is, so the
 configured endpoint must include the `/v1/traces` path.
 
+## Metrics export runtime
+
+The gateway uses `opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader`
+with the Tokio runtime instead of the default `PeriodicReader`. The OTLP HTTP
+exporter uses `reqwest`, which needs a Tokio reactor; the default reader spawns
+a plain OS thread and panics when the exporter polls. This requires the
+`experimental_metrics_periodicreader_with_async_runtime` and `rt-tokio` features
+on `opentelemetry_sdk`. E2E verification in `scripts/e2e-metrics-report.sh`
+asserts that exported counters reach Prometheus.
+
 ## Resource attributes
 
 Every span carries:
@@ -65,8 +75,8 @@ Every span carries:
 - `service.name = "gateway"`
 - `service.version = CARGO_PKG_VERSION`
 
-These are consistent with the resource-attribute convention planned for F-008
-and F-010, so trace backends (Jaeger) and dashboards (Grafana) can group by
+These are consistent with the resource-attribute convention used for F-008
+and F-010, so trace backends (Tempo) and dashboards (Grafana) can group by
 service without drift.
 
 ## Span naming
@@ -91,7 +101,7 @@ failures must be observable, never silently discarded, and never fatal).
 - Four well-maintained crates from the OpenTelemetry Rust project; no bespoke
   trace wire format.
 - HTTP/protobuf exporter is simple to test and operates over the same OTLP
-  endpoint shape the collector (F-007) and Jaeger (F-008) already use.
+  endpoint shape the collector (F-007) and Tempo (F-008) already use.
 - Shutdown flush with timeout prevents losing in-flight spans on process exit.
 
 ### Negative / trade-offs
@@ -109,6 +119,6 @@ failures must be observable, never silently discarded, and never fatal).
 
 - F-006: Distributed Trace Instrumentation (this work).
 - F-007: OpenTelemetry Collector Pipeline (consumes exported traces).
-- F-008: Distributed Trace Visualization (Jaeger backend).
-- AGENTS.md §7: observability conventions (export failures observable, never
-  fatal; no high-cardinality labels).
+- F-008: Distributed Trace Visualization (Tempo backend).
+- Observability conventions (export failures observable, never fatal; no
+  high-cardinality labels).

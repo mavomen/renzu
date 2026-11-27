@@ -116,6 +116,10 @@ Dependencies: F-001.
 
 **Status:** `DONE`
 
+**Verification evidence:** `scripts/verify-infrastructure.sh` runs in the CI e2e job, which is green on `develop`. Startup ordering, health checks, startup diagnostics, and shutdown behavior are exercised by that scripted verification. Application readiness now also reports span and log exporter failure counters; this is covered by unit tests and a live check with an unreachable OTLP endpoint. The base Compose file publishes no PostgreSQL host port and requires Grafana credentials; `.env.example` and `compose.local.yaml` provide the documented local opt-in path.
+
+**Known limitation:** Local verification can be blocked when another service occupies `127.0.0.1:5432`; add an untracked Compose override after `compose.local.yaml` to use a different host port.
+
 **Objective:** Provide a repeatable local environment.
 
 Scope:
@@ -225,6 +229,8 @@ Dependencies: F-003, F-006.
 ### F-008: Distributed Trace Visualization
 
 **Status:** `DONE`
+
+**Verification evidence:** `scripts/e2e-trace-visualization.sh` runs in the CI e2e job, which is green on `develop`. It submits an OTLP trace to Tempo and asserts that the trace is retrievable with a named span, kind, and positive duration. Grafana provisions the Tempo datasource, and experiment reports use Tempo/Grafana links.
 
 **Objective:** Inspect trace spans and operation timing.
 
@@ -349,7 +355,7 @@ Acceptance criteria:
 - Correlation behavior is tested or demonstrated.
 - No unsupported cross-backend correlation is claimed.
 
-Known limitation: None. Both gateway and orders services export OTLP logs via the OpenTelemetry log bridge (`opentelemetry-appender-tracing`), and log records carry native trace_id and span_id fields. Integration tests in both services (`log_and_trace_share_trace_id`) assert that logs emitted inside a handler span carry the same trace ID as the exported span.
+Known limitation: Loki labels application OTLP log streams `service_name=unknown_service`; `traceid` and `spanid` are stored in the log line rather than as indexed labels. Grafana provisions a log-to-trace derived field, but trace-to-log UI linking is not configured. Both services export OTLP logs via `opentelemetry-appender-tracing`, and integration tests in both services (`log_and_trace_share_trace_id`) assert that a log emitted inside a handler span carries the same trace ID as the exported span. End-to-end proof: `scripts/e2e-log-trace-correlation.sh` sends a traced gateway request, finds its log in Loki, and asserts the same trace ID is retrievable from Tempo.
 
 Dependencies: F-001 (log backend decision), F-005, F-007, F-008, F-012.
 
@@ -450,6 +456,8 @@ Dependencies: F-012, F-014.
 
 **Status:** `DONE`
 
+**Verification evidence:** `scripts/e2e-metrics-report.sh` runs in the fast CI e2e lane on pushes and pull requests. It asserts that `renzu_http_requests_total` is queryable in Prometheus and that a short baseline load test writes a schema-v1 JSON report matching its printed run ID. End-to-end trace and log proofs are covered by `scripts/e2e-trace-visualization.sh` and `scripts/e2e-log-trace-correlation.sh` in the same fast lane. `scripts/e2e-incident-journey.sh` reproduces the documented latency investigation: it compares baseline and `db-latency` runs against `/ready`, asserts a positive p95 delta, verifies fault cleanup, and confirms that a trace generated during the faulted workload is queryable in Tempo. The incident journey runs in the nightly full suite on `main` and on manual dispatch, while `scripts/ci-local.sh` runs all four scripts locally.
+
 **Objective:** Turn scenario executions into reproducible investigations.
 
 Scope:
@@ -480,7 +488,9 @@ Dependencies: F-013, F-015, F-016, F-017.
 ### F-019: Profiling Workflow
 
 **Priority:** P1
-**Status:** `DONE`
+**Status:** `IN_PROGRESS`
+
+**Reason for demotion:** Documentation-only; no automated test verifies the profiling workflow or results can be inspected (see TODO.md V-04).
 
 Scope:
 - Establish reproducible CPU profiling.
@@ -577,7 +587,7 @@ Scope:
 Scenarios:
 - `otel-collector-down` (`CollectorUnavailable`): telemetry export is broken
   while the application still responds. Symptom: requests succeed but no new
-  traces appear in the collector/Jaeger. Investigation: confirm `/health` is
+  traces appear in the Collector/Tempo. Investigation: confirm `/health` is
   healthy while trace export fails; the fault is structural (gateway flag),
   not verified against actual OTLP behavior.
 - `db-connection-failure` (`DatabaseConnectionFailure`): database connectivity

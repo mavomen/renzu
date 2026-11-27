@@ -5,9 +5,12 @@
 # All published ports are bound to 127.0.0.1 only (PRD NFR-04).
 # Image tags are pinned explicitly (no :latest) (PRD NFR-01).
 #
-# Validate without Docker:  docker compose config
-# Start:                    docker compose up -d
-# Stop:                     docker compose down
+# Base Compose keeps PostgreSQL unpublished and requires Grafana credentials
+# from the environment. The local opt-in path is:
+#   cp .env.example .env
+#   docker compose -f compose.yaml -f compose.local.yaml up -d
+# Validate that path without Docker:
+#   docker compose -f compose.yaml -f compose.local.yaml config
 
 services:
   tempo:
@@ -98,6 +101,7 @@ services:
       - "127.0.0.1:3100:3100"   # Loki HTTP API
     volumes:
       - loki_data:/loki
+      - ./deploy/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
     command:
       - "-config.file=/etc/loki/local-config.yaml"
     deploy:
@@ -122,8 +126,8 @@ services:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
     environment:
-      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:?set GF_SECURITY_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?set GF_SECURITY_ADMIN_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
     deploy:
       resources:
@@ -146,10 +150,8 @@ services:
     image: postgres:16.4
     container_name: renzu-postgres
     restart: unless-stopped
-    # Port 5432 is published to 127.0.0.1 for local development (PRD NFR-04).
-    # For shared environments, remove the ports block to disable host publication.
-    ports:
-      - "127.0.0.1:5432:5432"   # PostgreSQL
+    # Host port publication is opt-in via compose.local.yaml. Inter-service
+    # access uses Docker network DNS on postgres:5432.
     environment:
       - POSTGRES_USER=${RENZU_DB_USER:-renzu}
       - POSTGRES_PASSWORD=${RENZU_DB_PASSWORD:-renzu}
@@ -181,7 +183,7 @@ services:
       - RENZU_HOST=0.0.0.0
       - RENZU_PORT=8081
       - RENZU_LOG_LEVEL=info
-      - RENZU_OTLP_ENDPOINT=http://otel-collector:4317/v1/traces
+      - RENZU_OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
     deploy:
       resources:
         limits:
@@ -191,7 +193,7 @@ services:
       otel-collector:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 2 http://127.0.0.1:8081/health >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -211,6 +213,8 @@ services:
       - RENZU_LOG_LEVEL=info
       - RENZU_DATABASE_URL=postgres://renzu:renzu@postgres:5432/renzu
       - RENZU_ORDERS_URL=http://orders:8081
+      - RENZU_OTLP_ENDPOINT=http://otel-collector:4318/v1/traces
+      - RENZU_OTLP_METRICS_ENDPOINT=http://otel-collector:4318/v1/metrics
     deploy:
       resources:
         limits:
@@ -222,7 +226,7 @@ services:
       otel-collector:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health >/dev/null || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS --max-time 2 http://127.0.0.1:8080/health >/dev/null"]
       interval: 10s
       timeout: 3s
       retries: 3

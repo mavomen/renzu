@@ -10,10 +10,9 @@
 # versions; the `otlphttp` exporter is used instead, targeting Tempo's OTLP
 # HTTP receiver (tempo:4318). Tempo accepts OTLP on 4318.
 #
-# The `health_check` extension exposes a /healthz HTTP endpoint on 13133. The
-# image is distroless (no shell/nc/curl/wget), so compose.yaml probes the
-# collector by validating its config rather than running an in-container TCP
-# connect; a valid config is what binds the OTLP ports.
+# The `health_check` extension exposes a /healthz HTTP endpoint on 13133 and
+# probes the collector pipeline. The image installs curl, so compose.yaml probes
+# that endpoint rather than relying only on config validation.
 
 extensions:
   health_check:
