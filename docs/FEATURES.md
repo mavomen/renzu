@@ -456,7 +456,7 @@ Dependencies: F-012, F-014.
 
 **Status:** `DONE`
 
-**Verification evidence:** `scripts/e2e-metrics-report.sh` runs in the CI e2e job. It asserts that `renzu_http_requests_total` is queryable in Prometheus and that a short baseline load test writes a schema-v1 JSON report matching its printed run ID. `scripts/e2e-incident-journey.sh` reproduces the documented latency investigation: it compares baseline and `db-latency` runs against `/ready`, asserts a positive p95 delta, verifies fault cleanup, and confirms that a trace generated during the faulted workload is queryable in Tempo. End-to-end trace and log proofs are covered by `scripts/e2e-trace-visualization.sh` and `scripts/e2e-log-trace-correlation.sh`.
+**Verification evidence:** `scripts/e2e-metrics-report.sh` runs in the fast CI e2e lane on pushes and pull requests. It asserts that `renzu_http_requests_total` is queryable in Prometheus and that a short baseline load test writes a schema-v1 JSON report matching its printed run ID. End-to-end trace and log proofs are covered by `scripts/e2e-trace-visualization.sh` and `scripts/e2e-log-trace-correlation.sh` in the same fast lane. `scripts/e2e-incident-journey.sh` reproduces the documented latency investigation: it compares baseline and `db-latency` runs against `/ready`, asserts a positive p95 delta, verifies fault cleanup, and confirms that a trace generated during the faulted workload is queryable in Tempo. The incident journey runs in the nightly full suite on `main` and on manual dispatch, while `scripts/ci-local.sh` runs all four scripts locally.
 
 **Objective:** Turn scenario executions into reproducible investigations.
 

@@ -5,6 +5,10 @@ on:
     branches: [develop, main]
   pull_request:
     branches: [develop, main]
+  schedule:
+    # Full suite runs nightly on the default branch (main).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
   RUST_TOOLCHAIN: 1.97.0
@@ -32,6 +36,8 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+  # Fast lane on pushes and PRs; full suite on nightly and manual dispatch.
+  # Keep the check name stable because it is required by branch protection.
   e2e:
     runs-on: ubuntu-latest
     needs: checks
@@ -73,6 +79,7 @@ jobs:
         run: ./scripts/e2e-metrics-report.sh
 
       - name: Run incident investigation journey E2E
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: ./scripts/e2e-incident-journey.sh
 
       - name: Dump compose diagnostics

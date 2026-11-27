@@ -87,6 +87,12 @@ Prometheus, runs a short baseline load test, and checks the saved report. The
 incident-journey script reproduces the full latency investigation below using
 an isolated reports directory. All scripts leave Compose running.
 
+CI runs a fast E2E lane on pushes and pull requests: infrastructure verification,
+trace visualization, log/trace correlation, and metrics/report. The slower
+incident-journey E2E is reserved for the nightly full suite at 03:00 UTC on
+`main` and for manual `workflow_dispatch` runs. `scripts/ci-local.sh` remains the
+full local mirror and runs all four E2E scripts.
+
 ### Investigate a latency incident
 
 Run the baseline and faulted workloads against `/ready`, the endpoint where the
