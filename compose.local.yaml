@@ -1,0 +1,11 @@
+# Local-only opt-in overlay for Renzu.
+#
+# Publishes PostgreSQL on 127.0.0.1:5432 for host-side inspection. Credentials
+# are opted into separately by copying .env.example to .env.
+#
+# Use with: docker compose -f compose.yaml -f compose.local.yaml up -d
+
+services:
+  postgres:
+    ports: !override
+      - "127.0.0.1:5432:5432"

@@ -116,9 +116,9 @@ Dependencies: F-001.
 
 **Status:** `DONE`
 
-**Verification evidence:** `scripts/verify-infrastructure.sh` runs in the CI e2e job, which is green on `develop`. Startup ordering, health checks, startup diagnostics, and shutdown behavior are exercised by that scripted verification. Application readiness now also reports span and log exporter failure counters; this is covered by unit tests and a live check with an unreachable OTLP endpoint.
+**Verification evidence:** `scripts/verify-infrastructure.sh` runs in the CI e2e job, which is green on `develop`. Startup ordering, health checks, startup diagnostics, and shutdown behavior are exercised by that scripted verification. Application readiness now also reports span and log exporter failure counters; this is covered by unit tests and a live check with an unreachable OTLP endpoint. The base Compose file publishes no PostgreSQL host port and requires Grafana credentials; `.env.example` and `compose.local.yaml` provide the documented local opt-in path.
 
-**Known limitation:** Local verification can be blocked when another service occupies `127.0.0.1:5432`; use a Compose override for the host port in that case.
+**Known limitation:** Local verification can be blocked when another service occupies `127.0.0.1:5432`; add an untracked Compose override after `compose.local.yaml` to use a different host port.
 
 **Objective:** Provide a repeatable local environment.
 

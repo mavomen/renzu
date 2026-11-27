@@ -19,6 +19,11 @@ rustc-ice-*.txt
 # Generated experiment reports
 reports/
 
+# Local environment files
+.env
+.env.*
+!.env.example
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
