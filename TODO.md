@@ -8,7 +8,9 @@ task marked [BLOCKED] until its dependency is resolved.
 
 - [x] **CI-01: Get CI green and enforce required checks.**
   Status: DONE — `develop` CI run `45843670270` passed both `checks` and
-  `e2e`. Required checks are enforced on `develop` and `main`.
+  `e2e`. Required checks are enforced on `develop` and `main`. Maintainer
+  confirmed the pushed MVP-JOURNEY and HEALTH-02 commits also had both `checks`
+  and `e2e` green.
 
 - [x] **V-01: Verify F-013 claims end to end.**
   F-013 is DONE. Both services export OTLP logs with trace IDs, integration
@@ -25,10 +27,13 @@ task marked [BLOCKED] until its dependency is resolved.
   Status: DONE — the Collector image includes `curl`, the `health_check`
   extension probes the pipeline, and Compose probes `/healthz`.
 
-- [ ] **HEALTH-02: Make service readiness reflect exporter state.**
-  Status: PARTIAL — `/ready` degrades on span export failures and database
-  health. Log export failures are counted in telemetry but are not yet folded
-  into `/ready`, and exporter counters are not exposed as a metric endpoint.
+- [x] **HEALTH-02: Make service readiness reflect exporter state.**
+  Status: DONE — `/ready` in both services now degrades on span or log export
+  failures and exposes cumulative `span_export_failures` and
+  `log_export_failures` counters. Unit tests cover both failure paths, and a
+  live gateway check with an unreachable OTLP endpoint returned `not ready`
+  with both counters non-zero. Pushed to `develop`; maintainer confirmed both
+  `checks` and `e2e` green.
 
 - [x] **CORR-01: Prove log/trace correlation with a test.**
   Status: DONE — `log_and_trace_share_trace_id` passes in both services and
@@ -38,16 +43,27 @@ task marked [BLOCKED] until its dependency is resolved.
   Status: DONE — reports carry schema v1 and Tempo/Grafana deep links. The
   best-effort propagator limitation is documented in `README.md`.
 
-- [ ] **E2E-01: Complete observability E2E proof.**
+- [x] **E2E-01: Complete observability E2E proof.**
   Bring up the stack, run one scenario, and assert on each backend's API:
   trace in Tempo, metric in Prometheus, log in Loki, report written. Fast smoke
   set on PR, slower set nightly.
   Files: `scripts/`, `.github/workflows/ci.yml`, `README.md`, runbook.
-  Status: PARTIAL — all four backend assertions are implemented and run in CI
-  (`e2e-metrics-report.sh` adds the Prometheus counter and saved-report checks).
-  A local metrics-exporter bug was found and fixed: the default PeriodicReader
-  panicked without a Tokio reactor; the gateway now uses the async-runtime reader.
-  Nightly split remains deferred until MVP acceptance.
+  Status: DONE locally — all four backend assertions are implemented. The fast
+  PR/push lane keeps infrastructure verification, trace, correlation, and
+  metrics/report; the nightly full suite on `main` and manual dispatch add the
+  incident journey. Workflow YAML parses and the full local CI mirror passes.
+  Remote nightly/dispatch behavior is unverified until this change is pushed.
+
+- [x] **MVP-JOURNEY: Prove the incident investigation journey.**
+  Reproduce PRD Journey B: baseline load test, `db-latency` load test against
+  `/ready`, compare reports, verify fault cleanup, and query a referenced trace
+  in Tempo. Fix the documented command that targets `/health`, where no latency
+  is injected.
+  Files: `scripts/e2e-incident-journey.sh`, `README.md`, runbook, profiling docs.
+  Status: DONE — `scripts/e2e-incident-journey.sh` passed with a ~200 ms p95
+  delta, positive `renzu compare` delta, restored `/ready` latency, and a Tempo
+  trace found by search. All four local E2E scripts passed. Pushed to `develop`;
+  maintainer confirmed both `checks` and `e2e` green. No PR was created.
 
 - [x] **COMPOSE-01: Fix the stale compose.yaml header.**
   Status: DONE — the header lists the current services.
@@ -56,9 +72,13 @@ task marked [BLOCKED] until its dependency is resolved.
   Status: DONE — all eight services have `deploy.resources.limits` and the
   runbook documents the total.
 
-- [ ] **COMPOSE-03: Make Postgres publication and Grafana credentials opt-in.**
-  Status: PARTIAL — defaults remain `renzu`/`renzu` and `admin`/`admin` for
-  loopback use; environment overrides exist and are documented as local-only.
+- [x] **COMPOSE-03: Make Postgres publication and Grafana credentials opt-in.**
+  Status: DONE — the base `compose.yaml` publishes no PostgreSQL host port and
+  requires Grafana credentials. `.env.example` opts into local-only credentials
+  and `compose.local.yaml` opts into `127.0.0.1:5432`. Scripts, CI, and
+  `renzu up/status/down` use the opt-in path. ADR-0007 records the decision.
+  The full local CI mirror passed with the documented `15432` host-port
+  override, and remote CI run `45985282512` is green on `develop`.
 
 ## Phase 2: Hardening (P1, target ~6-8 weeks)
 
@@ -501,6 +521,101 @@ task marked [BLOCKED] until its dependency is resolved.
   Status: NOT IMPLEMENTED — no tests/e2e/ exists; ci.yml e2e job requires Docker
   and depends on unresolved otel-collector/jaeger dependency; no E2E suite.
   cc944e2 attribution removed (cc944e2 does not touch ci.yml).
+
+## Proposed Phase 3: Platform direction (awaiting approval)
+
+These items change the target from a local-first laboratory to a usable
+open-source DevOps/observability platform. All are `[PROPOSED]`; do not start
+any of them without explicit maintainer approval.
+
+- [ ] **DIST-00 [PROPOSED]: Approve platform direction and amend PRD.**
+  Change the product direction from local-first observability laboratory to a
+  usable open-source DevOps/observability platform. Update `docs/PRD.md`,
+  `docs/ARCHITECTURE.md`, and add an ADR recording the decision. Explicitly
+  revisit the existing non-goals for hosted operation and custom backends.
+  Status: PROPOSED — blocks DIST-07 and DIST-08.
+
+- [ ] **DIST-01 [PROPOSED]: Multi-node / multi-host deployment.**
+  Define a deployment topology that runs application services and telemetry
+  infrastructure across more than one host. Replace the single-host Compose
+  assumption with documented orchestration, networking, and volume strategy.
+  Acceptance: a reproducible multi-host deployment works end to end.
+  Verification: scripted multi-host smoke test or documented CI/VM job.
+  Dependencies: DIST-00.
+
+- [ ] **DIST-02 [PROPOSED]: Service discovery and federation.**
+  Add service discovery for application services and a federation model for
+  telemetry from multiple environments. Acceptance: services resolve
+  dependencies without hard-coded single-host addresses; telemetry from two
+  environments is queryable with consistent, low-cardinality environment
+  attributes. Dependencies: DIST-01.
+
+- [ ] **DIST-03 [PROPOSED]: High availability and horizontal scaling.**
+  Define replica strategy, failover behavior, load balancing, and health-aware
+  routing for services and telemetry components. Acceptance: one replica can
+  fail without losing the documented service level; scaling a service replica
+  set is reproducible and measurable. Dependencies: DIST-01, DIST-02.
+
+- [ ] **DIST-04 [PROPOSED]: Production retention and tiering.**
+  Define retention classes, downsampling, cold/warm/hot storage behavior, and
+  query semantics for aged telemetry. Acceptance: retention policies are
+  documented, enforceable, and verified against each supported backend.
+  Dependencies: DIST-00.
+
+- [ ] **DIST-05 [PROPOSED]: Authentication, RBAC, and tenancy.**
+  Add identity, authenticated access, role-based authorization, and tenant
+  isolation for the CLI, fault controls, and telemetry query surfaces.
+  Acceptance: unauthenticated access is denied; role and tenant boundaries are
+  tested; secrets are never logged. Dependencies: DIST-00.
+
+- [ ] **DIST-06 [PROPOSED]: Alerting and on-call workflows.**
+  Add alert rules, routing, escalation, silence windows, and runbook links.
+  Acceptance: an injected fault triggers a routed alert and resolves after
+  cleanup. Dependencies: DIST-04, DIST-05.
+
+- [ ] **DIST-07 [PROPOSED]: Managed backend support.**
+  Support externally managed telemetry backends through documented adapters
+  and configuration, with credentials supplied through environment variables
+  or secret managers. Acceptance: the stack runs against local or managed
+  backends without code changes; no secrets appear in logs. Dependencies:
+  DIST-00, DIST-05. Requires PRD amendment before implementation.
+
+- [ ] **DIST-08 [PROPOSED]: Custom storage engines.**
+  Evaluate whether project-owned trace, metric, or log storage is justified.
+  Start with an ADR comparing build versus integrate, then prototype only if
+  approved. Acceptance: decision ADR exists; any prototype has correctness,
+  performance, and migration evidence. Established backends remain the
+  default. Dependencies: DIST-00. Requires PRD amendment before implementation.
+  Recommend deferring until DIST-07 proves the adapter model is insufficient.
+
+- [ ] **DIST-09 [PROPOSED]: Packaging and distribution.**
+  Define how users install and run the platform: container images, deployment
+  manifests, CLI distribution, and reproducible release artifacts. No version
+  tags or release marks are applied until separately approved. Acceptance: a
+  clean environment can install and run the documented quickstart.
+  Dependencies: DIST-00, DIST-01.
+
+- [ ] **DIST-10 [PROPOSED]: Unified configuration and secret handling.**
+  Establish one validated configuration model across CLI, services, and
+  infrastructure, including secret inputs and redaction rules. Acceptance:
+  invalid configuration fails clearly; secrets are redacted by default;
+  configuration is covered by tests. Dependencies: DIST-00.
+
+- [ ] **DIST-11 [PROPOSED]: Upgrade and migration compatibility.**
+  Define config, report, and storage migration rules with rollback guidance.
+  Acceptance: an upgrade from the previous supported state preserves reports
+  and documented configuration. Dependencies: DIST-09, DIST-10.
+
+- [ ] **DIST-12 [PROPOSED]: Contributor and operator documentation.**
+  Add the docs needed for a usable open-source tool: architecture, deployment,
+  operations, troubleshooting, security model, ADR process, and contributor
+  workflow. Acceptance: a new contributor can reproduce development and
+  verification; an operator can deploy, secure, upgrade, and troubleshoot the
+  platform. Dependencies: DIST-00.
+
+Recommended ordering: DIST-00; DIST-10 and DIST-05; DIST-01, DIST-02,
+DIST-03; DIST-04, DIST-06, DIST-07; DIST-08 only if justified; DIST-09,
+DIST-11, and DIST-12 in parallel.
 
 ## Ordering
 
